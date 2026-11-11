@@ -1,0 +1,4 @@
+# 仅允许本项目已选定的构建工具安装脚本。
+allowBuilds:
+  esbuild: true
+autoInstallPeers: false

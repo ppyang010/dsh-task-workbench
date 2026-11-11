@@ -1,0 +1,11 @@
+node_modules/
+lib/
+.artifacts/
+.planning/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.tgz
+*.log
+coverage/

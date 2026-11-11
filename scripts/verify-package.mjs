@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict'
+import { readFile, stat } from 'node:fs/promises'
+const root = new URL('../', import.meta.url)
+const pkg = JSON.parse(await readFile(new URL('package.json', root), 'utf8'))
+for (const name of ['lib/index.js', 'lib/client.js', 'cordis.patch.yml', 'README.md', 'LICENSE', 'CHANGELOG.md']) assert.ok((await stat(new URL(name, root))).isFile(), `安装包缺少 ${name}`)
+const client = await readFile(new URL('lib/client.js', root), 'utf8')
+assert.ok(client.startsWith('window.__ModuleLoader__.load('))
+assert.ok(client.includes(`id:${JSON.stringify(pkg.name)}`))
+assert.ok(client.includes('require("react")'))
+assert.ok(!client.includes('__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED'), '不应打入第二份 React')
+const host = await readFile(new URL('lib/index.js', root), 'utf8')
+assert.match(host, /async mutate\(request\)/)
+assert.match(host, /async read\(\)/)
+assert.ok(!host.includes('/Users/'), '产物不应包含本机绝对路径')
+console.log('安装包入口、官方加载器、React 共享和 RPC 参数检查通过。')

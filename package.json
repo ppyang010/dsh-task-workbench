@@ -1,0 +1,32 @@
+{
+  "name": "@ppyang010/dsh-task-workbench",
+  "version": "0.1.0",
+  "description": "DSH 我的工作台：跨工作区关注会话，手动整理分类，可选自动纳入，保留原生聊天入口。",
+  "type": "module",
+  "license": "MIT",
+  "author": "ppyang010",
+  "repository": { "type": "git", "url": "git+https://github.com/ppyang010/dsh-task-workbench.git" },
+  "homepage": "https://github.com/ppyang010/dsh-task-workbench#readme",
+  "bugs": { "url": "https://github.com/ppyang010/dsh-task-workbench/issues" },
+  "main": "lib/index.js",
+  "exports": { ".": "./lib/index.js", "./client": "./lib/client.js", "./package.json": "./package.json" },
+  "files": ["lib", "cordis.patch.yml", "README.md", "LICENSE", "CHANGELOG.md"],
+  "engines": { "node": ">=22.15", "dsh": ">=0.2.1-rc.2" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "inject": ["slots", "connection", "sessions", "workspaces", "uiSession", "uiWorkspace", "layout"] },
+    "compatibility": { "dshReleases": { "0.2.1-rc.2": "compatible" } }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts src/client/ui/*.test.tsx",
+    "check": "pnpm run typecheck && pnpm test && pnpm run build",
+    "pack:check": "node scripts/verify-package.mjs",
+    "prepack": "node scripts/build.mjs"
+  },
+  "dependencies": { "zod": "4.4.3" },
+  "peerDependencies": { "@deepseek-ai/cordis": "~4.0.5", "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.2", "react": ">=18.3.1 <20" },
+  "devDependencies": { "@types/node": "^24.0.0", "@types/react": "^18.3.0", "@types/react-dom": "^18.3.0", "esbuild": "^0.25.0", "react": "18.3.1", "react-dom": "18.3.1", "tsx": "^4.20.0", "typescript": "^5.9.0" },
+  "publishConfig": { "access": "public" }
+}

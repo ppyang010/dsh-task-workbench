@@ -1,0 +1,4 @@
+# 独立面板；不替换已有任务看板，不注入 Agent 任务执行指令。
+- insert:
+    - id: ppyang010-dsh-task-workbench
+      name: '@ppyang010/dsh-task-workbench'
