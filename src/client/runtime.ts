@@ -43,6 +43,11 @@ export function deriveSessions(list: SessionList, workspaces: WorkspaceList, sta
   })
   return { sessions, ready, connected }
 }
+/** 进入宿主的空白新会话页，工作区选择与首次发送仍由原生界面处理。 */
+export function openNewSessionPage(ctx: RuntimeContext): void {
+  ctx.get('uiWorkspace').clearMain()
+}
+
 export function createRuntime(ctx: RuntimeContext): RuntimeFace {
   const sessions = ctx.get('sessions') as { list: Source<SessionList>; refresh(): Promise<void> }
   const workspaces = ctx.get('workspaces') as { list: Source<WorkspaceList> }

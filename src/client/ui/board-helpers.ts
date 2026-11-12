@@ -9,6 +9,20 @@ export interface BoardRow {
   unavailableReason: string
 }
 
+export const workspaceKey = (row: BoardRow): string => JSON.stringify(row.session?.workspaceId ?? null)
+
+/** 按真实工作区 ID 分组；组顺序稳定，组内保留人工排序和筛选隐藏记录。 */
+export function groupWorkspaces(rows: BoardRow[]): Array<{ key: string; title: string; rows: BoardRow[] }> {
+  const groups = new Map<string, { key: string; title: string; rows: BoardRow[] }>()
+  for (const row of rows) {
+    const key = workspaceKey(row)
+    const group = groups.get(key) ?? { key, title: row.workspaceTitle, rows: [] }
+    group.rows.push(row)
+    groups.set(key, group)
+  }
+  return [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, 'zh-CN') || a.key.localeCompare(b.key))
+}
+
 /** 目录尚未就绪时保留关注记录，避免把同步过程误判为会话丢失。 */
 export function getBoardRows(state: ClientState): BoardRow[] {
   const directory = new Map(uniqueSessions(state.sessions).map(session => [session.id, session]))
@@ -77,6 +91,37 @@ export function afterSessionId(rows: BoardRow[], targetSessionId: string, dragge
   const remaining = rows.filter(row => row.entry.sessionId !== draggedSessionId)
   const index = remaining.findIndex(row => row.entry.sessionId === targetSessionId)
   return index < 0 ? undefined : remaining[index + 1]?.entry.sessionId
+}
+
+export interface CardBox {
+  sessionId: string
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+/** 按屏幕中的行和横向位置定位；不依赖卡片等高，也不改变原始排序。 */
+export function locateDropTarget(boxes: readonly CardBox[], x: number, y: number, layout: 'list' | 'grid' = 'list'): { sessionId: string; edge: 'before' | 'after' } | undefined {
+  const valid = boxes.filter(box => box.right > box.left && box.bottom > box.top).sort((a, b) => a.top - b.top || a.left - b.left)
+  if (!valid.length) return undefined
+  const rows: Array<{ top: number; bottom: number; boxes: CardBox[] }> = []
+  for (const box of valid) {
+    const previous = rows.at(-1)
+    if (previous && Math.abs(previous.top - box.top) < 4) {
+      previous.boxes.push(box)
+      previous.bottom = Math.max(previous.bottom, box.bottom)
+    } else rows.push({ top: box.top, bottom: box.bottom, boxes: [box] })
+  }
+  for (const row of rows) row.boxes.sort((a, b) => a.left - b.left)
+  const first = rows[0], last = rows.at(-1)!
+  if (y < first.top) return { sessionId: first.boxes[0].sessionId, edge: 'before' }
+  if (y > last.bottom) return { sessionId: last.boxes.at(-1)!.sessionId, edge: 'after' }
+  const distance = (point: number, min: number, max: number) => Math.max(min - point, 0, point - max)
+  const row = rows.reduce((best, candidate) => distance(y, candidate.top, candidate.bottom) < distance(y, best.top, best.bottom) ? candidate : best)
+  const target = row.boxes.reduce((best, candidate) => distance(x, candidate.left, candidate.right) < distance(x, best.left, best.right) ? candidate : best)
+  const before = layout === 'grid' ? x < (target.left + target.right) / 2 : y < (target.top + target.bottom) / 2
+  return { sessionId: target.sessionId, edge: before ? 'before' : 'after' }
 }
 
 export function formatUpdatedAt(timestamp: number): string {

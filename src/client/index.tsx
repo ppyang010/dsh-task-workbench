@@ -1,8 +1,9 @@
 import * as React from 'react'
 import { PANEL_ID } from '../shared/model.ts'
 import { BoardController } from './controller.ts'
-import { createRuntime } from './runtime.ts'
+import { createRuntime, openNewSessionPage } from './runtime.ts'
 import { MyFocusBoard } from './ui/Board.tsx'
+import { registerHeaderEntry } from './header-entry.tsx'
 import styles from './ui/styles.css'
 
 export const name = 'ppyang010-task-workbench/client'
@@ -18,13 +19,16 @@ export function apply(ctx: any): void {
     const slots = ctx.get('slots')
     const Page = () => {
       React.useEffect(() => controller.activate(), [])
-      return <MyFocusBoard controller={controller} />
+      return <MyFocusBoard controller={controller} onNewSession={() => openNewSessionPage(ctx)} />
     }
     const Icon = ({ size = 17 }: { size?: number }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16m6-16v16"/></svg>
     try {
       disposers.push(slots.inject('main', () => slots.register({ name: 'main', key: PANEL_ID }, Page)))
-      disposers.push(slots.inject('sidebar.panellist', () => slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 12, label: '我的关注' }, Icon)))
+      disposers.push(slots.inject('sidebar.panellist', () => slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 12, label: '我的任务工作台' }, Icon)))
     } catch (error) { for (const dispose of disposers.reverse()) dispose(); throw error }
+    // 顶部入口单独挂载，旧宿主没有此槽位时保留侧边栏与看板。
+    try { disposers.push(registerHeaderEntry(slots, ctx.get('layout'))) }
+    catch { console.warn('[dsh-task-workbench] 顶部工作台入口不可用，请从侧边栏打开') }
     ctx.effect(() => () => { for (const dispose of disposers.reverse()) dispose() })
   } catch {
     // 客户端插件挂载失败不阻断 DSH 本身启动，控制台保留可定位的标识。

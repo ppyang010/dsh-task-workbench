@@ -1,17 +1,14 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react'
-import { COLUMNS, STATUS_LABELS, type BoardControllerFace, type ColumnId, type Command, type RuntimeStatus, type SessionView, type WatchEntry } from '../../shared/model.js'
+import { COLUMNS, STATUS_LABELS, type BoardControllerFace, type ColumnId, type Command, type SessionView, type WatchEntry } from '../../shared/model.js'
 import { Icon } from './Icons.js'
-import { afterSessionId, formatUpdatedAt, getAddDisabledReason, getBoardRows, matchesRow, matchesSession, uniqueSessions, workspaceOptions, type BoardRow } from './board-helpers.js'
+import { afterSessionId, formatUpdatedAt, getAddDisabledReason, getBoardRows, groupWorkspaces, workspaceKey, locateDropTarget, matchesRow, matchesSession, uniqueSessions, workspaceOptions, type BoardRow } from './board-helpers.js'
+import { SessionCard, StatusBadge } from './SessionCard.js'
 
 interface UndoEntry { entry: WatchEntry; beforeSessionId?: string }
-interface DropPosition { columnId: ColumnId; beforeSessionId?: string }
+interface DropPosition { columnId: ColumnId; beforeSessionId?: string; targetSessionId?: string; edge?: 'before' | 'after' }
 type Modal = { type: 'add'; columnId: ColumnId } | { type: 'rules' }
 const MAX_SELECTION = 500
 const PAGE_SIZE = 80
-
-function StatusBadge({ status, waitingLabel }: { status: RuntimeStatus; waitingLabel?: string }) {
-  return <span className={`dtw-status dtw-status-${status}`} title={waitingLabel || STATUS_LABELS[status]}><i aria-hidden="true" />{STATUS_LABELS[status]}</span>
-}
 
 function Dialog({ title, description, children, onClose, busy, className = '' }: { title: string; description: string; children: ReactNode; onClose: () => void; busy: boolean; className?: string }) {
   const id = useId()
@@ -69,44 +66,6 @@ function Dialog({ title, description, children, onClose, busy, className = '' }:
   </div>
 }
 
-function NoteEditor({ row, busy, onSave, onEditingChange }: { row: BoardRow; busy: boolean; onSave: (note: string, version: number) => Promise<boolean>; onEditingChange: (editing: boolean) => void }) {
-  const [draft, setDraft] = useState<{ text: string; expectedVersion: number } | null>(null)
-  const id = useId()
-  const textArea = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => { onEditingChange(draft !== null); if (draft) textArea.current?.focus() }, [draft === null, onEditingChange])
-  if (!draft) return <div className={`dtw-note ${row.entry.note ? '' : 'dtw-note-empty'}`}>
-    {row.entry.note && <p>{row.entry.note}</p>}
-    <button className="dtw-text-button" type="button" disabled={busy} onClick={() => setDraft({ text: row.entry.note, expectedVersion: row.entry.version })} aria-label={`${row.entry.note ? '编辑' : '添加'}备注：${row.title}`}><Icon name="edit" />{row.entry.note ? '编辑备注' : '添加备注'}</button>
-  </div>
-  const changedElsewhere = draft.expectedVersion !== row.entry.version
-  return <form className="dtw-note-editor" onSubmit={event => { event.preventDefault(); void (async () => { if (await onSave(draft.text, draft.expectedVersion)) setDraft(null) })() }}>
-    <label htmlFor={id}>关注备注</label>
-    <textarea id={id} ref={textArea} value={draft.text} maxLength={2000} rows={4} disabled={busy} onChange={event => setDraft({ ...draft, text: event.target.value })} placeholder="记下下次回来要处理的事…" onKeyDown={event => { event.stopPropagation(); if (event.key === 'Escape' && !busy) setDraft(null) }} />
-    <div className="dtw-note-count">{draft.text.length} / 2000</div>
-    {changedElsewhere && <div className="dtw-inline-warning" role="status"><p>这条关注记录已在别处更新。草稿已保留，确认最新备注后再保存。</p><details><summary>查看最新备注</summary><p>{row.entry.note || '暂无备注'}</p></details><button className="dtw-text-button" type="button" disabled={busy} onClick={() => setDraft({ ...draft, expectedVersion: row.entry.version })}>保留草稿，使用最新版本</button></div>}
-    <div className="dtw-note-actions"><button type="button" className="dtw-button dtw-button-small" disabled={busy} onClick={() => setDraft(null)}>取消</button><button type="submit" className="dtw-button dtw-button-primary dtw-button-small" disabled={busy || changedElsewhere}>{busy ? '保存中…' : '保存备注'}</button></div>
-  </form>
-}
-
-function SessionCard({ row, columnRows, busy, opening, dragging, dropBefore, onOpen, onUnfollow, onMove, onNote, onDragStart, onDragEnd }: {
-  row: BoardRow; columnRows: BoardRow[]; busy: boolean; opening: boolean; dragging: boolean; dropBefore: boolean
-  onOpen: () => void; onUnfollow: () => void; onMove: (columnId: ColumnId, beforeSessionId?: string) => void; onNote: (note: string, version: number) => Promise<boolean>
-  onDragStart: (event: DragEvent<HTMLElement>) => void; onDragEnd: () => void
-}) {
-  const [editingWithin, setEditingWithin] = useState(false)
-  const index = columnRows.findIndex(item => item.entry.sessionId === row.entry.sessionId)
-  return <article className={`dtw-card ${dragging ? 'dtw-card-dragging' : ''} ${dropBefore ? 'dtw-card-drop-before' : ''}`} data-dtw-session={row.entry.sessionId} draggable={!busy && !editingWithin} onDragStart={onDragStart} onDragEnd={onDragEnd} aria-label={row.title}>
-    <div className="dtw-card-head"><span className="dtw-drag-handle" aria-hidden="true" title="拖动调整分类和顺序"><Icon name="grip" /></span><h3>{row.title}</h3><button type="button" className="dtw-icon-button dtw-unfollow" disabled={busy || editingWithin} onClick={onUnfollow} aria-label={`取消关注：${row.title}`} title="仅取消关注，原会话保留"><Icon name="close" /></button></div>
-    <div className="dtw-workspace" title={row.workspaceTitle}><Icon name="folder" /><span>{row.workspaceTitle}</span>{row.entry.source === 'auto' && <span className="dtw-source">自动纳入</span>}</div>
-    <NoteEditor row={row} busy={busy} onSave={onNote} onEditingChange={setEditingWithin} />
-    <div className="dtw-card-status"><StatusBadge status={row.status} waitingLabel={row.session?.waitingLabel} /><time dateTime={row.session?.updatedAt && row.session.updatedAt > 0 ? new Date(row.session.updatedAt).toJSON() ?? undefined : undefined}>{formatUpdatedAt(row.session?.updatedAt ?? 0)}</time></div>
-    {row.session?.waitingLabel && row.status === 'waiting' && <p className="dtw-waiting-label">{row.session.waitingLabel}</p>}
-    {row.unavailableReason && <p className="dtw-card-unavailable"><Icon name="info" />{row.unavailableReason}</p>}
-    <footer className="dtw-card-footer"><button type="button" className="dtw-open-button" disabled={busy || opening || !!row.unavailableReason} onClick={onOpen} title={row.unavailableReason || '在 DSH 中打开原会话'}>{opening ? '正在打开…' : '打开原对话'}<Icon name="arrow" /></button><select className="dtw-move-select" value={row.entry.columnId} disabled={busy} onChange={event => onMove(event.target.value as ColumnId)} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select></footer>
-    <div className="dtw-card-order"><span>列内排序</span><button type="button" className="dtw-icon-button" disabled={busy || index <= 0} onClick={() => onMove(row.entry.columnId, columnRows[index - 1]?.entry.sessionId)} aria-label={`上移：${row.title}`}><Icon name="up" /></button><button type="button" className="dtw-icon-button" disabled={busy || index < 0 || index >= columnRows.length - 1} onClick={() => onMove(row.entry.columnId, columnRows[index + 2]?.entry.sessionId)} aria-label={`下移：${row.title}`}><Icon name="down" /></button></div>
-  </article>
-}
-
 function AddDialog({ sessions, watchedIds, initialColumn, busy, offline, runtimeReady, error, onClose, onRefresh, onAdd }: {
   sessions: SessionView[]; watchedIds: ReadonlySet<string>; initialColumn: ColumnId; busy: boolean; offline: boolean; runtimeReady: boolean; error?: string
   onClose: () => void; onRefresh: () => void; onAdd: (ids: string[], columnId: ColumnId) => Promise<boolean>
@@ -148,7 +107,7 @@ function AddDialog({ sessions, watchedIds, initialColumn, busy, offline, runtime
   </Dialog>
 }
 
-export function MyFocusBoard({ controller }: { controller: BoardControllerFace }) {
+export function MyFocusBoard({ controller, onNewSession }: { controller: BoardControllerFace; onNewSession?: () => void }) {
   const subscribe = useCallback((listener: () => void) => controller.subscribe(listener), [controller])
   const getSnapshot = useCallback(() => controller.getSnapshot(), [controller])
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
@@ -165,6 +124,9 @@ export function MyFocusBoard({ controller }: { controller: BoardControllerFace }
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const draggingRef = useRef<string | null>(null)
   const [drop, setDrop] = useState<DropPosition | null>(null)
+  const [collapsedColumns, setCollapsedColumns] = useState<Set<ColumnId>>(() => new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  const groupId = (column: ColumnId, key: string) => JSON.stringify([column, key])
   const root = useRef<HTMLDivElement>(null)
   const searchId = useId()
   const autoId = useId()
@@ -211,8 +173,28 @@ export function MyFocusBoard({ controller }: { controller: BoardControllerFace }
     catch { setLocalError('打开原对话失败，请稍后重试。') }
     finally { setOpeningId(null) }
   }
+  const revealColumn = (columnId: ColumnId) => setCollapsedColumns(previous => {
+    if (!previous.has(columnId)) return previous
+    const next = new Set(previous)
+    next.delete(columnId)
+    return next
+  })
+  const revealGroup = (columnId: ColumnId, sessionId: string) => {
+    const row = getBoardRows(controller.getSnapshot()).find(item => item.entry.sessionId === sessionId)
+    if (row) setCollapsedGroups(previous => { const next = new Set(previous); next.delete(groupId(columnId, workspaceKey(row))); return next })
+  }
+  const toggleColumn = (columnId: ColumnId) => setCollapsedColumns(previous => {
+    const next = new Set(previous)
+    if (next.has(columnId)) next.delete(columnId)
+    else if (next.size < COLUMNS.length - 1) next.add(columnId)
+    return next
+  })
   const move = async (sessionId: string, columnId: ColumnId, beforeSessionId?: string) => {
-    if (await command({ type: 'move', sessionId, columnId, ...(beforeSessionId ? { beforeSessionId } : {}) })) setNotice(`已调整至「${COLUMNS.find(column => column.id === columnId)?.title}」中的指定位置。`)
+    if (await command({ type: 'move', sessionId, columnId, ...(beforeSessionId ? { beforeSessionId } : {}) })) {
+      revealColumn(columnId)
+      revealGroup(columnId, sessionId)
+      setNotice(`已调整至「${COLUMNS.find(column => column.id === columnId)?.title}」中的指定位置。`)
+    }
   }
   const unfollow = async (sessionId: string) => {
     const entries = controller.getSnapshot().board.entries
@@ -229,13 +211,26 @@ export function MyFocusBoard({ controller }: { controller: BoardControllerFace }
   const clearDrag = () => { draggingRef.current = null; setDraggingId(null); setDrop(null) }
   const dropPosition = (event: DragEvent<HTMLElement>, columnId: ColumnId): DropPosition => {
     const element = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-dtw-session]') : null
-    const targetId = element?.dataset.dtwSession
-    if (!element || !targetId) return { columnId }
-    if (targetId === draggingRef.current) return { columnId, beforeSessionId: targetId }
-    const rect = element.getBoundingClientRect()
-    if (event.clientY < rect.top + rect.height / 2) return { columnId, beforeSessionId: targetId }
-    return { columnId, beforeSessionId: afterSessionId(grouped[columnId], targetId, draggingRef.current ?? '') }
+    if (element?.dataset.dtwSession === draggingRef.current) return { columnId, beforeSessionId: draggingRef.current ?? undefined }
+    const source = rows.find(row => row.entry.sessionId === draggingRef.current)
+    const ownRows = grouped[columnId].filter(row => source && workspaceKey(row) === workspaceKey(source))
+    const ownIds = new Set(ownRows.map(row => row.entry.sessionId))
+    const groupElement = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-dtw-workspace]')].find(node => node.dataset.dtwWorkspace === (source && workspaceKey(source)))
+    const hoveredGroup = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-dtw-workspace]') : null
+    // 拖入其他工作区的区域只改变分类，不能改变会话所属工作区。
+    if (hoveredGroup && hoveredGroup !== groupElement) return { columnId }
+    const nodes = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-dtw-session]')].filter(node => ownIds.has(node.dataset.dtwSession ?? ''))
+    const boxes = nodes.filter(node => node.dataset.dtwSession !== draggingRef.current && node.getClientRects().length > 0).map(node => {
+      const rect = node.getBoundingClientRect()
+      return { sessionId: node.dataset.dtwSession!, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+    })
+    const grid = groupElement?.querySelector('.dtw-cards')
+    const tracks = grid ? getComputedStyle(grid).gridTemplateColumns.trim().split(/\s+/).length : 1
+    const target = locateDropTarget(boxes, event.clientX, event.clientY, tracks > 1 ? 'grid' : 'list')
+    if (!target) return { columnId }
+    return { columnId, targetSessionId: target.sessionId, edge: target.edge, beforeSessionId: target.edge === 'before' ? target.sessionId : afterSessionId(ownRows, target.sessionId, draggingRef.current ?? '') }
   }
+  const updateDrop = (position: DropPosition) => setDrop(previous => previous?.columnId === position.columnId && previous.beforeSessionId === position.beforeSessionId && previous.targetSessionId === position.targetSessionId && previous.edge === position.edge ? previous : position)
   const restore = async () => {
     if (!undo) return
     const removed = undo
@@ -247,35 +242,112 @@ export function MyFocusBoard({ controller }: { controller: BoardControllerFace }
       if (anchor && !await controller.command({ type: 'move', sessionId: removed.entry.sessionId, columnId: removed.entry.columnId, beforeSessionId: anchor.sessionId })) return false
       return true
     })
-    if (restored) { setUndo(null); setNotice('已恢复关注、备注与可恢复的列内位置。') }
+    if (restored) { revealColumn(removed.entry.columnId); revealGroup(removed.entry.columnId, removed.entry.sessionId); setUndo(null); setNotice('已恢复关注、备注与可恢复的列内位置。') }
   }
 
-  return <div className="dtw-root" ref={root} tabIndex={-1}>
+  return <div className="dtw-root dtw-compact" ref={root} tabIndex={-1} aria-label="我的任务工作台">
     <main className="dtw-main" aria-busy={busy}>
-      <div className="dtw-breadcrumb"><Icon name="board" /><span>我的工作台</span><span aria-hidden="true">/</span><strong>我的关注</strong><span className={`dtw-connection ${state.connected ? 'dtw-connected' : ''}`}><i aria-hidden="true" />{state.connected ? state.runtimeReady ? '已连接' : '同步中' : '连接已断开'}</span></div>
-      <header className="dtw-hero"><div className="dtw-hero-copy"><p className="dtw-eyebrow">把注意力留给重要的对话</p><h1>我的关注<span aria-hidden="true">。</span></h1><p className="dtw-subtitle">跨工作区整理需要跟进的会话，随时回到原对话。</p></div><div className="dtw-header-actions"><div className="dtw-auto"><div><div className="dtw-auto-title">自动纳入<button className="dtw-icon-button" type="button" onClick={() => setModal({ type: 'rules' })} aria-label="查看自动纳入规则"><Icon name="info" /></button></div><p id={autoId}>{state.board.settings.autoCollect ? '已开启 · 新一轮自动关注' : '已关闭 · 仅手动关注'}</p></div><button type="button" role="switch" className="dtw-switch" aria-label="自动纳入会话" aria-checked={state.board.settings.autoCollect} aria-describedby={autoId} disabled={disabled} onClick={() => { const autoCollect = !state.board.settings.autoCollect; void (async () => { if (await command({ type: 'settings', autoCollect })) setNotice(autoCollect ? '已开启自动纳入，新的会话轮次会加入我的关注。' : '已关闭自动纳入，已有关注记录保留。') })() }}><span /></button></div><button type="button" className="dtw-button dtw-button-primary" disabled={disabled || !state.runtimeReady} onClick={() => setModal({ type: 'add', columnId: 'focus' })}><Icon name="plus" />添加已有会话</button></div></header>
-      <div className="dtw-stats" aria-label="已关注会话统计"><span><strong>{rows.length}</strong>已关注</span><span className="dtw-stat-divider" aria-hidden="true" />{(['running', 'waiting', 'unread'] as const).map(item => <span key={item}><i className={`dtw-dot dtw-dot-${item}`} aria-hidden="true" /><strong>{rows.filter(row => row.status === item).length}</strong>{STATUS_LABELS[item]}</span>)}<span className="dtw-static-classification"><Icon name="lock" />运行状态只更新标记，分类由你决定</span></div>
+      <header className="dtw-header">
+        <div className="dtw-topbar">
+          <div className="dtw-heading-group">
+            <h1>我的关注</h1>
+            <div className="dtw-stats" aria-label="已关注会话统计">
+              <span><strong>{rows.length}</strong>已关注</span>
+              {(['running', 'waiting', 'unread', 'idle'] as const).map(item => <span key={item}><i className={`dtw-dot dtw-dot-${item}`} aria-hidden="true" /><strong>{rows.filter(row => row.status === item).length}</strong>{STATUS_LABELS[item]}</span>)}
+            </div>
+          </div>
+          <div className="dtw-header-actions">
+            <div className="dtw-auto">
+              <span className="dtw-auto-title">自动纳入</span>
+              <span className="dtw-sr-only" id={autoId}>{state.board.settings.autoCollect ? '已开启，新一轮自动关注' : '已关闭，仅手动关注'}</span>
+              <button type="button" role="switch" className="dtw-switch" aria-label="自动纳入会话" aria-checked={state.board.settings.autoCollect} aria-describedby={autoId} disabled={disabled} onClick={() => {
+                const autoCollect = !state.board.settings.autoCollect
+                void (async () => { if (await command({ type: 'settings', autoCollect })) setNotice(autoCollect ? '已开启自动纳入，新的会话轮次会加入我的关注。' : '已关闭自动纳入，已有关注记录保留。') })()
+              }}><span /></button>
+            </div>
+            <span className={`dtw-connection ${state.connected ? 'dtw-connected' : ''}`} title={state.connected ? state.runtimeReady ? '已连接' : '同步中' : '连接已断开'}><i aria-hidden="true" /><span className="dtw-sr-only">{state.connected ? '已连接' : '连接已断开'}</span></span>
+            <button type="button" className="dtw-icon-button dtw-help" aria-label="查看使用帮助" title="使用帮助与自动纳入规则" onClick={() => setModal({ type: 'rules' })}><Icon name="info" /></button>
+            <button type="button" className="dtw-button" disabled={disabled || !onNewSession} title="进入 DSH 原生新会话页，选择工作区后开始聊天" onClick={() => { try { onNewSession?.() } catch { setLocalError('无法打开新会话页，请稍后重试。') } }}><Icon name="plus" />新建会话</button>
+            <button type="button" className="dtw-button dtw-button-primary" disabled={disabled || !state.runtimeReady} onClick={() => setModal({ type: 'add', columnId: 'focus' })}><Icon name="plus" />添加已有会话</button>
+          </div>
+        </div>
+        <div className="dtw-toolbar">
+          <div className="dtw-search"><Icon name="search" /><label className="dtw-sr-only" htmlFor={searchId}>搜索已关注会话、工作区、备注或运行状态</label><input id={searchId} type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索会话、工作区、备注或运行状态…" /></div>
+          <select value={workspace} onChange={event => setWorkspace(event.target.value)} aria-label="按工作区筛选已关注会话"><option value="">全部工作区</option>{workspaces.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select>
+          <select value={status} onChange={event => setStatus(event.target.value)} aria-label="按运行状态筛选已关注会话"><option value="">全部运行状态</option>{Object.entries(STATUS_LABELS).map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select>
+          <button type="button" className="dtw-icon-button dtw-refresh" disabled={busy} onClick={() => { void refresh() }} title="刷新关注与会话目录" aria-label="刷新看板"><Icon name="refresh" /></button>
+        </div>
+      </header>
       {!state.connected && <div className="dtw-banner dtw-banner-warning" role="status"><Icon name="warning" /><p>与 DSH 的连接已断开。现有关注仍保留，重新连接后可继续整理。</p><button type="button" className="dtw-text-button" disabled={busy} onClick={() => { void refresh() }}>重新连接</button></div>}
       {state.connected && !state.runtimeReady && <div className="dtw-banner" role="status"><Icon name="refresh" /><p>会话目录正在同步，已有关注记录会继续保留。</p></div>}
       {error && <div className="dtw-banner dtw-banner-error" role="alert"><Icon name="warning" /><p>{error}</p><button type="button" className="dtw-icon-button" aria-label="关闭错误提示" onClick={() => { setLocalError(undefined); controller.clearError() }}><Icon name="close" /></button></div>}
-      <div className="dtw-toolbar"><div className="dtw-search"><Icon name="search" /><label className="dtw-sr-only" htmlFor={searchId}>搜索已关注会话、工作区、备注或运行状态</label><input id={searchId} type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索会话、工作区、备注或运行状态…" /></div><select value={workspace} onChange={event => setWorkspace(event.target.value)} aria-label="按工作区筛选已关注会话"><option value="">全部工作区</option>{workspaces.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select><select value={status} onChange={event => setStatus(event.target.value)} aria-label="按运行状态筛选已关注会话"><option value="">全部运行状态</option>{Object.entries(STATUS_LABELS).map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select><button type="button" className="dtw-icon-button dtw-refresh" disabled={busy} onClick={() => { void refresh() }} title="刷新关注与会话目录" aria-label="刷新看板"><Icon name="refresh" /></button></div>
-      <div className="dtw-results"><span>{filtered ? `显示 ${visible.length} / ${rows.length} 条关注` : '拖拽卡片调整分类与顺序，也可使用卡片上的分类和排序按钮'}</span>{filtered && <button type="button" className="dtw-text-button" onClick={() => { setQuery(''); setWorkspace(''); setStatus('') }}>清除筛选</button>}<span className="dtw-save-state" role="status">{busy ? '正在同步保存…' : ''}</span></div>
-      <section className="dtw-board" aria-label="关注会话分类看板">
+      {(filtered || busy) && <div className="dtw-results" role="status"><span>{filtered ? `显示 ${visible.length} / ${rows.length} 条关注` : '正在同步保存…'}</span>{filtered && <button type="button" className="dtw-text-button" onClick={() => { setQuery(''); setWorkspace(''); setStatus('') }}>清除筛选</button>}</div>}
+      <section className="dtw-board" aria-label="关注会话分类看板" style={{ gridTemplateColumns: COLUMNS.map(column => collapsedColumns.has(column.id) ? '44px' : 'minmax(0, 1fr)').join(' ') }}>
         {COLUMNS.map(column => {
           const columnRows = grouped[column.id]
           const visibleRows = columnRows.filter(row => visibleIds.has(row.entry.sessionId))
-          return <section key={column.id} className={`dtw-column dtw-column-${column.id} ${drop?.columnId === column.id ? 'dtw-column-dropping' : ''}`} aria-labelledby={`${searchId}-${column.id}`} onDragOver={event => { if (!draggingRef.current || disabled) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDrop(dropPosition(event, column.id)) }} onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDrop(null) }} onDrop={event => { if (!draggingRef.current || disabled) return; event.preventDefault(); const sessionId = draggingRef.current; const position = dropPosition(event, column.id); clearDrag(); if (sessionId !== position.beforeSessionId) void move(sessionId, position.columnId, position.beforeSessionId) }}>
-            <header className="dtw-column-head"><span className="dtw-column-mark" aria-hidden="true" /><h2 id={`${searchId}-${column.id}`}>{column.title}</h2><span className="dtw-column-count" aria-label={`共 ${columnRows.length} 条`}>{filtered ? `${visibleRows.length} / ${columnRows.length}` : columnRows.length}</span></header><p className="dtw-column-description">{column.description}</p>
-            <div className={`dtw-cards ${drop?.columnId === column.id && !drop.beforeSessionId ? 'dtw-cards-drop-end' : ''}`}>
-              {state.loading && !rows.length ? <div className="dtw-empty"><Icon name="refresh" /><strong>正在载入关注…</strong></div> : visibleRows.length ? visibleRows.map(row => <SessionCard key={row.entry.sessionId} row={row} columnRows={columnRows} busy={disabled} opening={openingId === row.entry.sessionId} dragging={draggingId === row.entry.sessionId} dropBefore={drop?.columnId === column.id && drop.beforeSessionId === row.entry.sessionId} onOpen={() => { void openSession(row.entry.sessionId) }} onUnfollow={() => { void unfollow(row.entry.sessionId) }} onMove={(columnId, beforeSessionId) => { void move(row.entry.sessionId, columnId, beforeSessionId) }} onNote={(note, expectedVersion) => command({ type: 'note', sessionId: row.entry.sessionId, note, expectedVersion })} onDragStart={event => { if (disabled || (event.target instanceof Element && event.target.closest('button, input, select, textarea'))) { event.preventDefault(); return } draggingRef.current = row.entry.sessionId; setDraggingId(row.entry.sessionId); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-dtw-session', row.entry.sessionId) }} onDragEnd={clearDrag} />) : <div className="dtw-empty"><Icon name={filtered ? 'search' : column.id === 'waiting' ? 'info' : column.id === 'later' ? 'folder' : 'plus'} /><strong>{filtered ? '没有符合筛选条件的会话' : column.id === 'focus' ? '留一个位置给重要的对话' : column.id === 'waiting' ? '等待你处理的对话，放在这里' : '先放一放，下次再继续'}</strong><p>{filtered ? '调整筛选后，其他关注会重新显示。' : '添加已有会话，或从其他列拖入。'}</p></div>}
-            </div><button type="button" className="dtw-add-to-column" disabled={disabled || !state.runtimeReady} onClick={() => setModal({ type: 'add', columnId: column.id })}><Icon name="plus" />添加已有会话</button>
+          const collapsed = collapsedColumns.has(column.id)
+          const canCollapse = collapsed || collapsedColumns.size < COLUMNS.length - 1
+          const headingId = `${searchId}-${column.id}`
+          const bodyId = `${headingId}-body`
+          return <section key={column.id} data-dtw-column={column.id} data-collapsed={collapsed} className={`dtw-column dtw-column-${column.id} ${collapsed ? 'dtw-column-collapsed' : ''} ${drop?.columnId === column.id ? 'dtw-column-dropping' : ''}`} aria-labelledby={headingId}
+            onDragOver={event => { if (!draggingRef.current || disabled) return; event.preventDefault(); event.dataTransfer.dropEffect = 'move'; updateDrop(dropPosition(event, column.id)) }}
+            onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDrop(null) }}
+            onDrop={event => { if (!draggingRef.current || disabled) return; event.preventDefault(); const sessionId = draggingRef.current; const position = dropPosition(event, column.id); clearDrag(); if (sessionId !== position.beforeSessionId) void move(sessionId, position.columnId, position.beforeSessionId) }}>
+            <header className="dtw-column-head">
+              <h2 id={headingId} title={column.description}>{column.title}</h2>
+              <span className="dtw-column-count" aria-label={`共 ${columnRows.length} 条`}>{filtered ? `${visibleRows.length} / ${columnRows.length}` : columnRows.length}</span>
+              <button type="button" className="dtw-icon-button dtw-column-toggle" disabled={!canCollapse} aria-label={`${collapsed ? '展开' : '折叠'}「${column.title}」`} title={canCollapse ? `${collapsed ? '展开' : '折叠'}分类` : '至少保留一个展开的分类'} aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => toggleColumn(column.id)}><Icon name={collapsed ? 'expand' : 'collapse'} /></button>
+              {!collapsed && <button type="button" className="dtw-icon-button dtw-column-add" aria-label={`添加到「${column.title}」`} title="添加已有会话" disabled={disabled || !state.runtimeReady} onClick={() => setModal({ type: 'add', columnId: column.id })}><Icon name="plus" /></button>}
+            </header>
+            <div className="dtw-column-body" id={bodyId} hidden={collapsed}>
+              <div className="dtw-workspace-groups">
+                {state.loading && !rows.length ? <div className="dtw-empty"><Icon name="refresh" /><strong>正在载入关注…</strong></div> : visibleRows.length ? groupWorkspaces(columnRows).filter(group => group.rows.some(row => visibleIds.has(row.entry.sessionId))).map(group => {
+                  const matched = group.rows.filter(row => visibleIds.has(row.entry.sessionId))
+                  const key = groupId(column.id, group.key)
+                  const folded = collapsedGroups.has(key)
+                  const groupBodyId = `${bodyId}-${encodeURIComponent(group.key)}`
+                  return <section className="dtw-workspace-group" key={group.key} data-dtw-workspace={group.key} aria-label={group.title}>
+                    <button type="button" className="dtw-workspace-heading" aria-expanded={!folded} aria-controls={groupBodyId} title={group.title} onClick={() => setCollapsedGroups(previous => { const next = new Set(previous); if (next.has(key)) next.delete(key); else next.add(key); return next })}>
+                      <Icon name={folded ? 'expand' : 'down'} /><Icon name="folder" /><span className="dtw-workspace-name">{group.title}</span><span className="dtw-workspace-count">{filtered ? `${matched.length} / ${group.rows.length}` : group.rows.length}</span>
+                    </button>
+                    <div className="dtw-cards" id={groupBodyId} hidden={folded}>
+                      {matched.map(row => <SessionCard
+                        key={row.entry.sessionId} row={row} columnRows={group.rows} busy={disabled} opening={openingId === row.entry.sessionId} dragging={draggingId === row.entry.sessionId}
+                        dropBefore={drop?.columnId === column.id && drop.targetSessionId === row.entry.sessionId && drop.edge === 'before'}
+                        dropAfter={drop?.columnId === column.id && drop.targetSessionId === row.entry.sessionId && drop.edge === 'after'}
+                        onOpen={() => { void openSession(row.entry.sessionId) }} onUnfollow={() => { void unfollow(row.entry.sessionId) }}
+                        onMove={(columnId, beforeSessionId) => { void move(row.entry.sessionId, columnId, beforeSessionId) }}
+                        onNote={(note, expectedVersion) => command({ type: 'note', sessionId: row.entry.sessionId, note, expectedVersion })}
+                        onDragStart={event => {
+                          if (disabled || (event.target instanceof Element && event.target.closest('button, input, select, textarea, summary, details'))) { event.preventDefault(); return }
+                          draggingRef.current = row.entry.sessionId; setDraggingId(row.entry.sessionId)
+                          event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-dtw-session', row.entry.sessionId)
+                        }} onDragEnd={clearDrag}
+                      />)}</div></section>
+                }) : <div className="dtw-empty"><Icon name={filtered ? 'search' : 'plus'} /><strong>{filtered ? '没有符合筛选的会话' : '暂无关注'}</strong><p>{filtered ? '调整筛选即可重新显示。' : '点击上方 ＋ 添加，或拖入卡片。'}</p></div>}
+              </div>
+            </div>
           </section>
         })}
       </section>
-      <div className="dtw-principle"><Icon name="link" /><div><strong>关注留在这里，对话留在原处。</strong><p>打开卡片会回到 DSH 原对话。取消关注只移除关注关系，原工作区和聊天记录都保留。</p></div></div>
     </main>
     {(notice || undo) && <aside className="dtw-toast" role="status" aria-live="polite"><span>{notice}</span>{undo && <button className="dtw-text-button" type="button" disabled={disabled || modal !== null} onClick={() => { void restore() }}><Icon name="undo" />撤销取消关注</button>}<button type="button" className="dtw-icon-button" aria-label="关闭操作提示" disabled={modal !== null || busy} onClick={() => { setNotice(''); setUndo(null) }}><Icon name="close" /></button></aside>}
-    {modal?.type === 'add' && <AddDialog sessions={state.sessions} watchedIds={watchedIds} initialColumn={modal.columnId} busy={busy} offline={!state.connected} runtimeReady={state.runtimeReady} error={error} onClose={closeModal} onRefresh={() => { void refresh() }} onAdd={async (ids, columnId) => { const success = await command({ type: 'add', sessionIds: ids, columnId }); if (success) { setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) } return success }} />}
-    {modal?.type === 'rules' && <Dialog title="自动纳入，手动整理" description="默认关闭。开启后会在会话开始新一轮时建立关注关系。" busy={false} onClose={() => setModal(null)} className="dtw-dialog-rules"><div className="dtw-rules"><section><strong>由你决定什么时候开启</strong><p>关闭时仅手动添加；关闭开关会保留已有关注。</p></section><section><strong>新一轮开始时，加入「我的关注」</strong><p>包括新会话和已有会话续聊。只打开查看不会纳入，也不会回扫全部历史。子代理会话会被跳过。</p></section><section><strong>运行状态与分类分别更新</strong><p>运行中、等待回应、完成未读只更新卡片标记。会话的分类和顺序始终由你手动整理。</p></section><section><strong>取消关注后，自动纳入会跳过</strong><p>取消关注会记入排除名单，避免立即加回。之后可从添加窗口重新关注，也可直接撤销。</p></section></div><footer className="dtw-dialog-footer"><button type="button" className="dtw-button dtw-button-primary" onClick={() => setModal(null)}>知道了</button></footer></Dialog>}
+    {modal?.type === 'add' && <AddDialog sessions={state.sessions} watchedIds={watchedIds} initialColumn={modal.columnId} busy={busy} offline={!state.connected} runtimeReady={state.runtimeReady} error={error} onClose={closeModal} onRefresh={() => { void refresh() }} onAdd={async (ids, columnId) => {
+      const success = await command({ type: 'add', sessionIds: ids, columnId })
+      if (success) { revealColumn(columnId); ids.forEach(id => revealGroup(columnId, id)); setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) }
+      return success
+    }} />}
+    {modal?.type === 'rules' && <Dialog title="使用帮助" description="分类由你决定，运行状态实时跟随原会话。" busy={false} onClose={closeModal} className="dtw-dialog-rules">
+      <div className="dtw-rules">
+        <section><strong>打开原对话</strong><p>点击卡片标题回到 DSH 原会话，继续使用原生输入与所有现有入口。</p></section>
+        <section><strong>整理与排序</strong><p>每列按工作区分组，点击工作区组头可折叠。拖拽支持组内排序和跨分类移动，不改变会话所属工作区；拖入其他工作区区域时，卡片仍归入自己的工作区。宽列同组内从左到右、从上到下排列；上移、下移仅作用于同组。</p></section>
+        <section><strong>折叠分类</strong><p>分类标题旁的箭头可收起或展开该列，至少保留一个展开分类。向折叠列拖入卡片后会展开，折叠只改变显示布局。</p></section>
+        <section><strong>默认关闭自动纳入</strong><p>开启后，普通会话开始新一轮时加入「我的关注」，包括已有会话续聊。只打开查看不会纳入，也不会回扫历史；关闭时保留已有关注。</p></section>
+        <section><strong>取消关注后自动跳过</strong><p>取消关注加入排除名单，原会话仍在原工作区。可撤销或手动重新关注，不会停止、归档或删除原会话。</p></section>
+        <section><strong>状态与备注</strong><p>运行状态只更新标记，不会移动分类。「完成未读」沿用 DSH 的页面内存提醒，不代表任务验收完成。长备注可展开，编辑入口在卡片的「更多操作」中。</p></section>
+      </div>
+      <footer className="dtw-dialog-footer"><button type="button" className="dtw-button dtw-button-primary" onClick={closeModal}>知道了</button></footer>
+    </Dialog>}
   </div>
 }

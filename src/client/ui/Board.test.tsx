@@ -4,7 +4,7 @@ import test from 'node:test'
 import { createElement, type ReactElement } from 'react'
 import { initialState, type BoardControllerFace, type ClientState, type SessionView, type WatchEntry } from '../../shared/model.js'
 import { MyFocusBoard } from './Board.js'
-import { afterSessionId, formatUpdatedAt, getAddDisabledReason, getBoardRows, matchesRow, matchesSession, uniqueSessions, workspaceOptions } from './board-helpers.js'
+import { afterSessionId, formatUpdatedAt, getAddDisabledReason, getBoardRows, groupWorkspaces, matchesRow, matchesSession, uniqueSessions, workspaceOptions } from './board-helpers.js'
 
 const { renderToStaticMarkup } = createRequire(import.meta.url)('react-dom/server') as { renderToStaticMarkup: (element: ReactElement) => string }
 const entry = (sessionId: string, values: Partial<WatchEntry> = {}): WatchEntry => ({ sessionId, columnId: 'focus', note: '', source: 'manual', addedAt: 1, updatedAt: 1, version: 1, ...values })
@@ -17,6 +17,19 @@ function markup(state: ClientState): string {
   }
   return renderToStaticMarkup(createElement(MyFocusBoard, { controller }))
 }
+
+test('工作区按 ID 分组，重名不合并，缺失记录保留且组内顺序不变', () => {
+  const state = client({ board: { ...initialState(), entries: ['a', 'b', 'c', 'missing'].map(id => entry(id)) }, sessions: [session('a'), session('b', { workspaceId: 'work-2' }), session('c')] })
+  const groups = groupWorkspaces(getBoardRows(state))
+  assert.equal(groups.length, 3)
+  assert.deepEqual(groups.find(group => group.rows[0].entry.sessionId === 'a')?.rows.map(row => row.entry.sessionId), ['a', 'c'])
+  assert.equal(groups.filter(group => group.title === '产品工作区').length, 2)
+  assert.equal(groups.flatMap(group => group.rows).length, 4)
+  const html = markup(state)
+  assert.equal((html.match(/class="dtw-workspace-heading"/g) ?? []).length, 3)
+  assert.doesNotMatch(html, /class="dtw-workspace"/)
+  assert.equal(afterSessionId(groups.find(group => group.rows.length === 2)!.rows, 'a', 'other'), 'c')
+})
 
 test('目录未就绪时保留卡片，不误报会话丢失或运行状态', () => {
   const state = client({ board: { ...initialState(), entries: [entry('a')] }, runtimeReady: false })
@@ -95,7 +108,7 @@ test('空标题与无效时间可安全呈现', () => {
 
 test('组件默认呈现工作台与三列，自动纳入关闭且不生成聊天输入框', () => {
   const html = markup(client())
-  for (const title of ['我的工作台', '我的关注', '等我处理', '暂时搁置', '添加已有会话']) assert.ok(html.includes(title), title)
+  for (const title of ['我的任务工作台', '我的关注', '等我处理', '暂时搁置', '添加已有会话']) assert.ok(html.includes(title), title)
   assert.match(html, /role="switch"[^>]*aria-checked="false"/)
   assert.doesNotMatch(html, /<textarea|发送消息|原生输入框示意|宿主侧边栏/)
 })
@@ -106,7 +119,16 @@ test('会话标题与备注按文本转义，缺失会话的打开按钮禁用',
   assert.ok(html.includes('&lt;script&gt;示例备注&lt;/script&gt;'))
   assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'))
   assert.doesNotMatch(html, /<script>|<img src=x/)
-  assert.match(html, /class="dtw-open-button" disabled=""/)
+  assert.match(html, /class="dtw-card-title dtw-open-button" disabled=""/)
+  assert.match(html, /class="dtw-button dtw-card-open" disabled=""/)
+  assert.match(html, /aria-label="打开对话：/)
+})
+
+test('顶部空闲统计仅计入已关注且状态确认为空闲的会话', () => {
+  const html = markup(client({ board: { ...initialState(), entries: ['idle', 'running', 'missing'].map(id => entry(id)) }, sessions: [session('idle', { status: 'idle' }), session('running', { status: 'running' }), session('unwatched', { status: 'idle' })] }))
+  assert.match(html, /dtw-dot-idle[^>]*><\/i><strong>1<\/strong>空闲/)
+  const syncing = markup(client({ runtimeReady: false, board: { ...initialState(), entries: [entry('idle')] }, sessions: [session('idle', { status: 'idle' })] }))
+  assert.match(syncing, /dtw-dot-idle[^>]*><\/i><strong>0<\/strong>空闲/)
 })
 
 test('保存与加载期间，提交、分类、备注和刷新按钮均显式禁用', () => {
@@ -114,7 +136,7 @@ test('保存与加载期间，提交、分类、备注和刷新按钮均显式�
     const html = markup(client({ ...flags, board: { ...initialState(), entries: [entry('a')] }, sessions: [session('a')] }))
     assert.match(html, /role="switch"[^>]*disabled=""/)
     assert.match(html, /class="dtw-move-select"[^>]*disabled=""/)
-    assert.match(html, /class="dtw-text-button"[^>]*disabled=""[^>]*aria-label="添加备注/)
+    assert.match(html, /disabled=""[^>]*aria-label="添加备注/)
     assert.match(html, /aria-label="刷新看板"/)
     assert.match(html, /class="dtw-icon-button dtw-refresh"[^>]*disabled=""/)
   }

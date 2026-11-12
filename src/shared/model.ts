@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const VERSION = '0.1.0'
+export const VERSION = '0.3.4'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'

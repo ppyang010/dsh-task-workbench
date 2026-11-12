@@ -18,8 +18,11 @@ const seed: Array<[string, string, string, SessionView['status']]> = [
   ['demo-7', '工作区目录整理与命名约定', '插件实验室', 'idle'],
   ['demo-8', '下月学习计划与书单', '日常资料', 'idle'],
 ]
+const scenario = new URLSearchParams(location.search).get('scenario')
+if (scenario === 'stress') for (let i = 9; i <= 32; i++) seed.push([`demo-${i}`, `滚动验证会话 ${i}：菜单与弹窗仍可操作`, '合成压力场景', 'idle'])
 let board: BoardState = initialState()
-board.entries = seed.slice(0, 6).map((item, i) => ({ sessionId: item[0], columnId: i < 3 ? 'focus' : i < 5 ? 'waiting' : 'later', note: ['确认分类和入口，保留原有聊天方式。', '后台在跑，稍后回来查看结果。', '', '等我确认采用哪一种方案。', '先看看结果，再决定下一步。', '下周有空再继续。'][i], source: 'manual', addedAt: Date.now(), updatedAt: Date.now(), version: 1 }))
+const watched = scenario === 'focus-four' ? seed.slice(0, 4) : scenario === 'stress' ? seed : seed.slice(0, 6)
+board.entries = watched.map((item, i) => ({ sessionId: item[0], columnId: scenario ? 'focus' : i < 3 ? 'focus' : i < 5 ? 'waiting' : 'later', note: scenario === 'focus-four' && i === 1 ? '这是一条用于验证长备注折叠的合成记录。'.repeat(18) : ['确认分类和入口，保留原有聊天方式。', '后台在跑，稍后回来查看结果。', '', '等我确认采用哪一种方案。', '先看看结果，再决定下一步。', '下周有空再继续。'][i] ?? '', source: i === 0 ? 'auto' : 'manual', addedAt: Date.now(), updatedAt: Date.now(), version: 1 }))
 const store = new WatchStore({ get: () => board, set: async value => { board = value } })
 const services = { sessionQuery: { listSessions: async () => seed.map(item => ({ header: { id: item[0] }, formatStatus: 'current' })) }, workspaceRegistry: { archivedSessionIds: [] as string[] } }
 const service = new WorkbenchService(store, services)
@@ -30,7 +33,11 @@ let failNext = false
 const controller = new BoardController({ call: async (_channel, method, payload: any) => {
   await new Promise(resolve => setTimeout(resolve, 80))
   if (method.endsWith('/mutate') && failNext) { failNext = false; return { ok: true, value: { ok: false, error: { message: '模拟保存失败：草稿保留，请再次保存' } } } }
-  try { return { ok: true, value: { ok: true, value: method.endsWith('/mutate') ? await service.mutate(payload.args.request) : service.read() } } }
+  try {
+    const value = method.endsWith('/mutate') ? await service.mutate(payload.args.request) : service.read()
+    document.documentElement.dataset.demoRevision = String(value.revision)
+    return { ok: true, value: { ok: true, value } }
+  }
   catch (error) { return { ok: true, value: { ok: false, error: { message: error instanceof Error ? error.message : '示例操作失败' } } } }
 } }, {
   snapshot: () => runtime,
@@ -48,4 +55,4 @@ document.querySelector('#demo-offline')!.addEventListener('click', () => { runti
 document.querySelector('#demo-failure')!.addEventListener('click', () => { failNext = true; document.querySelector('#demo-result')!.textContent = '下一次修改将模拟保存失败' })
 document.querySelector('#demo-dark')!.addEventListener('click', () => { const dark = document.documentElement.dataset.theme !== 'dark'; document.documentElement.dataset.theme = dark ? 'dark' : 'light'; document.documentElement.style.colorScheme = dark ? 'dark' : 'light'; document.documentElement.style.setProperty('--dsw-bg', dark ? '#171c19' : '#f6f7f3'); document.documentElement.style.setProperty('--dsw-text-primary', dark ? '#e2e8de' : '#283226') })
 document.querySelector('#demo-turn')!.addEventListener('click', async () => { const id = 'demo-7'; runtime.sessions.find(s => s.id === id)!.status = 'running'; publish(); await service.onSessionEvent({ id, header: { id } }, { type: 'turn/start' }); await controller.refresh(); document.querySelector('#demo-result')!.textContent = '已模拟 demo-7 开始新一轮' })
-createRoot(document.querySelector('#app')!).render(<MyFocusBoard controller={controller} />)
+createRoot(document.querySelector('#app')!).render(<MyFocusBoard controller={controller} onNewSession={() => { document.querySelector('#demo-result')!.setAttribute('data-new-session', 'true') }} />)
