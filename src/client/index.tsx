@@ -4,6 +4,7 @@ import { BoardController } from './controller.ts'
 import { createRuntime, openNewSessionPage } from './runtime.ts'
 import { MyFocusBoard } from './ui/Board.tsx'
 import { registerHeaderEntry } from './header-entry.tsx'
+import { registerSessionCopy } from './session-copy.tsx'
 import styles from './ui/styles.css'
 
 export const name = 'ppyang010-task-workbench/client'
@@ -19,7 +20,7 @@ export function apply(ctx: any): void {
     const slots = ctx.get('slots')
     const Page = () => {
       React.useEffect(() => controller.activate(), [])
-      return <MyFocusBoard controller={controller} onNewSession={() => openNewSessionPage(ctx)} />
+      return <MyFocusBoard controller={controller} onNewSession={workspaceId => openNewSessionPage(ctx, workspaceId)} />
     }
     const Icon = ({ size = 17 }: { size?: number }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16m6-16v16"/></svg>
     try {
@@ -29,6 +30,11 @@ export function apply(ctx: any): void {
     // 顶部入口单独挂载，旧宿主没有此槽位时保留侧边栏与看板。
     try { disposers.push(registerHeaderEntry(slots, ctx.get('layout'))) }
     catch { console.warn('[dsh-task-workbench] 顶部工作台入口不可用，请从侧边栏打开') }
+    // 新宿主提供会话上下文菜单；旧宿主继续使用原生复制，不影响看板。
+    try {
+      const menus = ctx.get('contextMenus')
+      if (menus) disposers.push(registerSessionCopy(menus))
+    } catch { console.warn('[dsh-task-workbench] 复制名称菜单不可用，保留原生复制') }
     ctx.effect(() => () => { for (const dispose of disposers.reverse()) dispose() })
   } catch {
     // 客户端插件挂载失败不阻断 DSH 本身启动，控制台保留可定位的标识。

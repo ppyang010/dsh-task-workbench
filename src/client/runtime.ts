@@ -15,6 +15,7 @@ export interface RuntimeFace {
   subscribe(listener: () => void): () => void
   refresh(): Promise<void>
   open(sessionId: string): Promise<void>
+  rename(sessionId: string, title: string): Promise<void>
 }
 const pendingLabels: Record<string, string> = { approval: '等待审批', 'plan-review': '等待方案确认', question: '等待回答' }
 
@@ -43,9 +44,23 @@ export function deriveSessions(list: SessionList, workspaces: WorkspaceList, sta
   })
   return { sessions, ready, connected }
 }
-/** 进入宿主的空白新会话页，工作区选择与首次发送仍由原生界面处理。 */
-export function openNewSessionPage(ctx: RuntimeContext): void {
-  ctx.get('uiWorkspace').clearMain()
+/** 优先沿用筛选工作区，其次当前会话工作区；不自动发送消息。 */
+export async function openNewSessionPage(ctx: RuntimeContext, preferredWorkspaceId?: string): Promise<void> {
+  const navigation = ctx.get('uiWorkspace') as {
+    selection: Source<{ sessionId?: string }>
+    openWorkspace(id: string): Promise<void>
+    clearMain(): void
+  }
+  const catalog = (ctx.get('workspaces') as { list: Source<WorkspaceList> }).list.getSnapshot()
+  if (catalog.phase !== 'ready') throw new Error('工作区目录尚未就绪，请稍后重试')
+  const preferred = catalog.items.find(item => item.workspaceId === preferredWorkspaceId)
+  const currentId = navigation.selection.getSnapshot().sessionId
+  const current = currentId ? catalog.items.find(item => item.sessionIds.includes(currentId)) : undefined
+  const target = preferred ?? current
+  if (target) {
+    // 原生接口复用或准备空白会话，保留已有草稿，并负责主面板切换。
+    await navigation.openWorkspace(target.workspaceId)
+  } else navigation.clearMain()
 }
 
 export function createRuntime(ctx: RuntimeContext): RuntimeFace {
@@ -62,5 +77,10 @@ export function createRuntime(ctx: RuntimeContext): RuntimeFace {
     },
     refresh: async () => { await sessions.refresh() },
     open: async id => { await navigation.openSession(id) },
+    rename: async (id, title) => {
+      // 沿用宿主侧边栏重命名调用链，由 using 负责引用的取得与释放。
+      const result = await ctx.get('sessions').using(id, { source: 'workspaceOperation' }, (reference: { binding: { session: { rename(title: string): Promise<{ ok: boolean; error?: { message: string } }> } } }) => reference.binding.session.rename(title))
+      if (!result.ok) throw new Error(result.error?.message || '会话名未保存，请稍后重试')
+    },
   }
 }

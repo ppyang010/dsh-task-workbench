@@ -1,7 +1,8 @@
-import { STATUS_LABELS, type ClientState, type RuntimeStatus, type SessionView, type WatchEntry } from '../../shared/model.js'
+import { STATUS_LABELS, type ClientState, type ColumnId, type RuntimeStatus, type SessionView, type WatchEntry } from '../../shared/model.js'
 
 export interface BoardRow {
   entry: WatchEntry
+  displayColumnId: ColumnId
   session?: SessionView
   title: string
   workspaceTitle: string
@@ -26,20 +27,22 @@ export function groupWorkspaces(rows: BoardRow[]): Array<{ key: string; title: s
 /** 目录尚未就绪时保留关注记录，避免把同步过程误判为会话丢失。 */
 export function getBoardRows(state: ClientState): BoardRow[] {
   const directory = new Map(uniqueSessions(state.sessions).map(session => [session.id, session]))
-  return state.board.entries.map(entry => {
+  return state.board.entries.map<BoardRow>(entry => {
     const session = directory.get(entry.sessionId)
     const unavailableReason = !state.runtimeReady
       ? '会话目录正在同步，请稍后打开'
       : session ? getUnavailableReason(session) : '暂时找不到原会话；关注记录已保留，可刷新重试'
     return {
       entry,
+      // 仅派生展示位置，暂时搁置和人工分类、排序始终保留。
+      displayColumnId: entry.columnId === 'focus' && state.connected && state.runtimeReady && !unavailableReason && (session?.status === 'waiting' || session?.status === 'unread') ? 'waiting' : entry.columnId,
       session,
       title: session ? session.title.trim() || '未命名会话' : state.runtimeReady ? '暂时无法找到的会话' : '会话资料待同步',
       workspaceTitle: session?.workspaceTitle.trim() || '工作区待确认',
       status: state.runtimeReady ? session?.status ?? 'unknown' : 'unknown',
       unavailableReason,
     }
-  })
+  }).sort((a, b) => Number(a.displayColumnId !== a.entry.columnId) - Number(b.displayColumnId !== b.entry.columnId))
 }
 
 export function getUnavailableReason(session: SessionView): string {
@@ -91,6 +94,13 @@ export function afterSessionId(rows: BoardRow[], targetSessionId: string, dragge
   const remaining = rows.filter(row => row.entry.sessionId !== draggedSessionId)
   const index = remaining.findIndex(row => row.entry.sessionId === targetSessionId)
   return index < 0 ? undefined : remaining[index + 1]?.entry.sessionId
+}
+
+/** 自动待处理卡片仍属于原分类，不能作为另一分类的持久化排序锚点。 */
+export function moveAnchor(rows: BoardRow[], targetId: string, edge: 'before' | 'after', columnId: ColumnId, draggedId: string): string | undefined {
+  const index = rows.findIndex(row => row.entry.sessionId === targetId)
+  if (index < 0) return undefined
+  return rows.slice(index + (edge === 'after' ? 1 : 0)).find(row => row.entry.sessionId !== draggedId && row.entry.columnId === columnId)?.entry.sessionId
 }
 
 export interface CardBox {

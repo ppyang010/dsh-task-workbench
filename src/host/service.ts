@@ -16,7 +16,10 @@ export class WorkbenchService {
   async mutate(raw: unknown): Promise<BoardState> {
     const result = commandSchema.safeParse(raw)
     if (!result.success) throw new WorkbenchError('invalid_input', '操作参数无效，请刷新后重试')
-    if (result.data.type !== 'add') return this.store.command(result.data)
+    const request = result.data
+    if (request.type !== 'add' && request.type !== 'restore') return this.store.command(request)
+    // 已关注的重复恢复直接交由串行存储判定，不要求目录此刻仍可用。
+    if (request.type === 'restore' && this.store.snapshot().entries.some(entry => entry.sessionId === request.sessionId)) return this.store.command(request)
     // 仅读取统一目录中的 header，不恢复 Agent、不读取聊天日志正文。
     const records = await this.services.sessionQuery.listSessions()
     const archived = new Set(this.services.workspaceRegistry.archivedSessionIds)

@@ -88,6 +88,24 @@ export class BoardController implements BoardControllerFace {
       return true
     } catch (error) { this.patch({ error: error instanceof Error ? error.message : '暂时无法打开原会话' }); return false }
   }
+  async renameSession(id: string, title: string): Promise<boolean> {
+    if (this.stopped || this.state.saving || this.state.loading) return false
+    const name = title.trim()
+    const target = this.state.sessions.find(session => session.id === id)
+    if (!name) { this.patch({ error: '会话名不能为空' }); return false }
+    if (!this.state.connected || !this.state.runtimeReady || !target?.openable || target.missing || target.archived || target.subagent) {
+      this.patch({ error: '当前会话不可修改名称，请确认连接正常且会话未归档' }); return false
+    }
+    if (name === target.title) { this.clearError(); return true }
+    this.patch({ saving: true, error: undefined })
+    try {
+      await this.runtime.rename(id, name)
+      // 原生接口在确认后更新宿主标题投影，看板直接同步同一份目录。
+      this.syncRuntime()
+      return true
+    } catch (error) { this.patch({ error: error instanceof Error ? error.message : '会话名未保存，请稍后重试' }); return false }
+    finally { this.patch({ saving: false }) }
+  }
   clearError(): void { this.patch({ error: undefined }) }
   dispose(): void {
     this.stopped = true

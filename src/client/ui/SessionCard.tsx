@@ -7,7 +7,10 @@ export function StatusBadge({ status, waitingLabel }: { status: RuntimeStatus; w
   return <span className={`dtw-status dtw-status-${status}`} title={waitingLabel || STATUS_LABELS[status]}><i aria-hidden="true" />{waitingLabel || STATUS_LABELS[status]}</span>
 }
 
+export interface NoteDraft { text: string; expectedVersion: number }
 export interface SessionCardProps {
+  draft: NoteDraft | null
+  setDraft: (draft: NoteDraft | null) => void
   row: BoardRow
   columnRows: BoardRow[]
   busy: boolean
@@ -16,6 +19,7 @@ export interface SessionCardProps {
   dropBefore: boolean
   dropAfter: boolean
   onOpen: () => void
+  onRename: () => void
   onUnfollow: () => void
   onMove: (columnId: ColumnId, beforeSessionId?: string) => void
   onNote: (note: string, version: number) => Promise<boolean>
@@ -23,8 +27,9 @@ export interface SessionCardProps {
   onDragEnd: () => void
 }
 
-export function SessionCard({ row, columnRows, busy, opening, dragging, dropBefore, dropAfter, onOpen, onUnfollow, onMove, onNote, onDragStart, onDragEnd }: SessionCardProps) {
-  const [draft, setDraft] = useState<{ text: string; expectedVersion: number } | null>(null)
+export function SessionCard({ draft, setDraft, row, columnRows, busy, opening, dragging, dropBefore, dropAfter, onOpen, onRename, onUnfollow, onMove, onNote, onDragStart, onDragEnd }: SessionCardProps) {
+  const autoWaiting = row.displayColumnId !== row.entry.columnId
+  const sortableRows = columnRows.filter(item => item.entry.columnId === row.displayColumnId)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -35,7 +40,7 @@ export function SessionCard({ row, columnRows, busy, opening, dragging, dropBefo
   const menu = useRef<HTMLDetailsElement>(null)
   const menuTrigger = useRef<HTMLElement>(null)
   const title = useRef<HTMLButtonElement>(null)
-  const index = columnRows.findIndex(item => item.entry.sessionId === row.entry.sessionId)
+  const index = sortableRows.findIndex(item => item.entry.sessionId === row.entry.sessionId)
   const editing = draft !== null
   const disabled = busy || editing
   const changedElsewhere = draft !== null && draft.expectedVersion !== row.entry.version
@@ -91,6 +96,7 @@ export function SessionCard({ row, columnRows, busy, opening, dragging, dropBefo
       {row.entry.source === 'auto' && <span className="dtw-source" title="由自动纳入加入">自动纳入</span>}
       <time dateTime={row.session?.updatedAt && row.session.updatedAt > 0 ? new Date(row.session.updatedAt).toJSON() ?? undefined : undefined}>{formatUpdatedAt(row.session?.updatedAt ?? 0)}</time>
     </div>
+    {autoWaiting && <p className="dtw-auto-waiting" title="原分类为我的关注，处理后自动返回；可在分类下拉中选择等我处理以长期保留">自动待处理 · 原分类：我的关注</p>}
     {draft ? <form className="dtw-note-editor" onSubmit={event => {
       event.preventDefault()
       if (busy || changedElsewhere) return
@@ -107,7 +113,7 @@ export function SessionCard({ row, columnRows, busy, opening, dragging, dropBefo
     </div> : null}
     {row.unavailableReason && <p className="dtw-card-unavailable"><Icon name="info" />{row.unavailableReason}</p>}
     <footer className="dtw-card-actions">
-      <select className="dtw-move-select" value={row.entry.columnId} disabled={disabled} onChange={event => onMove(event.target.value as ColumnId)} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select>
+      <select className="dtw-move-select" title={autoWaiting ? '原分类；选择等我处理可长期保留，选择暂时搁置可暂停提醒' : '调整人工分类'} value={row.entry.columnId} disabled={disabled} onChange={event => onMove(event.target.value as ColumnId)} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select>
       <button type="button" className="dtw-button dtw-card-open" disabled={disabled || opening || !!row.unavailableReason} onClick={onOpen} aria-label={`打开对话：${row.title}`} title={row.unavailableReason || (editing ? '先保存或取消备注' : '返回原生会话页面')}><Icon name="arrow" />{opening ? '正在打开…' : '打开对话'}</button>
       <details className="dtw-card-menu" ref={menu} data-placement={above ? 'above' : 'below'} onToggle={event => {
         const open = event.currentTarget.open
@@ -117,14 +123,15 @@ export function SessionCard({ row, columnRows, busy, opening, dragging, dropBefo
           const bounds = menu.current?.closest('.dtw-column-body')?.getBoundingClientRect()
           const bottom = Math.min(window.innerHeight, bounds?.bottom ?? window.innerHeight)
           const top = Math.max(0, bounds?.top ?? 0)
-          setAbove(rect.bottom + 150 > bottom && rect.top - top > 150)
+          setAbove(rect.bottom + 190 > bottom && rect.top - top > 190)
         }
       }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeMenu() }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(true) } }}>
-        <summary ref={menuTrigger} className="dtw-icon-button" aria-label={`更多操作：${row.title}`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault() }} onKeyDown={event => { if (disabled && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} title="备注、排序与取消关注"><Icon name="more" /></summary>
+        <summary ref={menuTrigger} className="dtw-icon-button" aria-label={`更多操作：${row.title}`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault() }} onKeyDown={event => { if (disabled && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} title="修改会话名、备注、排序与取消关注"><Icon name="more" /></summary>
         <div className="dtw-card-menu-panel">
+          <button type="button" disabled={disabled || opening || !!row.unavailableReason} onClick={() => menuAction(onRename)} aria-label={`修改会话名：${row.title}`}><Icon name="edit" />修改会话名</button>
           <button type="button" disabled={disabled} onClick={editNote} aria-label={`${row.entry.note ? '编辑' : '添加'}备注：${row.title}`}><Icon name="edit" />{row.entry.note ? '编辑备注' : '添加备注'}</button>
-          <button type="button" disabled={disabled || index <= 0} onClick={() => menuAction(() => onMove(row.entry.columnId, columnRows[index - 1]?.entry.sessionId))} aria-label={`上移：${row.title}`}><Icon name="up" />上移</button>
-          <button type="button" disabled={disabled || index < 0 || index >= columnRows.length - 1} onClick={() => menuAction(() => onMove(row.entry.columnId, columnRows[index + 2]?.entry.sessionId))} aria-label={`下移：${row.title}`}><Icon name="down" />下移</button>
+          <button type="button" disabled={disabled || index <= 0} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index - 1]?.entry.sessionId))} aria-label={`上移：${row.title}`}><Icon name="up" />上移</button>
+          <button type="button" disabled={disabled || index < 0 || index >= sortableRows.length - 1} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index + 2]?.entry.sessionId))} aria-label={`下移：${row.title}`}><Icon name="down" />下移</button>
           <button type="button" className="dtw-menu-danger" disabled={disabled} onClick={() => menuAction(onUnfollow)} aria-label={`取消关注：${row.title}`}><Icon name="close" />取消关注</button>
         </div>
       </details>

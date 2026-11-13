@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const VERSION = '0.3.4'
+export const VERSION = '0.7.1'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'
@@ -21,12 +21,18 @@ export const entrySchema = z.object({
   updatedAt: z.number().finite().nonnegative(),
   version: z.number().int().min(1),
 }).strict()
+export const removedEntrySchema = z.object({
+  entry: entrySchema,
+  removedAt: z.number().finite().nonnegative(),
+  beforeSessionId: sessionIdSchema.optional(),
+}).strict()
 export const stateSchema = z.object({
   schemaVersion: z.literal(1),
   revision: z.number().int().nonnegative(),
-  settings: z.object({ autoCollect: z.boolean() }).strict(),
+  settings: z.object({ autoCollect: z.boolean(), copySessionName: z.boolean().default(false) }).strict(),
   entries: z.array(entrySchema).max(20000),
   excludedSessionIds: z.array(sessionIdSchema).max(100000),
+  removedEntries: z.array(removedEntrySchema).max(100000).default([]),
 }).strict().superRefine((value, ctx) => {
   const seen = new Set<string>()
   for (const item of value.entries) {
@@ -35,18 +41,29 @@ export const stateSchema = z.object({
   }
   if (new Set(value.excludedSessionIds).size !== value.excludedSessionIds.length) ctx.addIssue({ code: 'custom', message: '排除名单不能重复' })
   if (value.excludedSessionIds.some(id => seen.has(id))) ctx.addIssue({ code: 'custom', message: '会话不能同时关注和排除' })
+  const excluded = new Set(value.excludedSessionIds)
+  const removed = new Set<string>()
+  for (const { entry } of value.removedEntries) {
+    if (removed.has(entry.sessionId)) ctx.addIssue({ code: 'custom', message: '已取消关注快照不能重复' })
+    if (!excluded.has(entry.sessionId)) ctx.addIssue({ code: 'custom', message: '已取消关注快照必须属于排除名单' })
+    if (seen.has(entry.sessionId)) ctx.addIssue({ code: 'custom', message: '会话不能同时关注和保留取消快照' })
+    removed.add(entry.sessionId)
+  }
 })
 export type WatchEntry = z.infer<typeof entrySchema>
+export type RemovedEntry = z.infer<typeof removedEntrySchema>
 export type BoardState = z.infer<typeof stateSchema>
 export function initialState(): BoardState {
-  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false }, entries: [], excludedSessionIds: [] }
+  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, copySessionName: false }, entries: [], excludedSessionIds: [], removedEntries: [] }
 }
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('add'), sessionIds: z.array(sessionIdSchema).min(1).max(500), columnId: columnSchema }).strict(),
   z.object({ type: z.literal('unfollow'), sessionId: sessionIdSchema }).strict(),
+  z.object({ type: z.literal('restore'), sessionId: sessionIdSchema }).strict(),
   z.object({ type: z.literal('move'), sessionId: sessionIdSchema, columnId: columnSchema, beforeSessionId: sessionIdSchema.optional() }).strict(),
   z.object({ type: z.literal('note'), sessionId: sessionIdSchema, note: z.string().max(2000), expectedVersion: z.number().int().min(1) }).strict(),
   z.object({ type: z.literal('settings'), autoCollect: z.boolean() }).strict(),
+  z.object({ type: z.literal('copySettings'), includeName: z.boolean() }).strict(),
 ])
 export type Command = z.infer<typeof commandSchema>
 export type RuntimeStatus = 'running' | 'waiting' | 'unread' | 'idle' | 'unknown'
@@ -80,5 +97,6 @@ export interface BoardControllerFace {
   refresh(): Promise<void>
   command(command: Command): Promise<boolean>
   openSession(sessionId: string): Promise<boolean>
+  renameSession(sessionId: string, title: string): Promise<boolean>
   clearError(): void
 }

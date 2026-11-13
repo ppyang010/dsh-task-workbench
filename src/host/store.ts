@@ -44,17 +44,45 @@ export class WatchStore {
   private apply(draft: BoardState, request: Command, allowedIds?: ReadonlySet<string>): void {
     const now = this.clock()
     if (request.type === 'settings') { draft.settings.autoCollect = request.autoCollect; return }
+    if (request.type === 'copySettings') { draft.settings.copySessionName = request.includeName; return }
     if (request.type === 'add') {
       const ids = [...new Set(request.sessionIds)]
       if (!allowedIds || ids.some(id => !allowedIds.has(id))) throw new WorkbenchError('session_unavailable', '部分会话已归档、已删除、属于子代理或暂不可用，请刷新后重新选择')
       draft.excludedSessionIds = draft.excludedSessionIds.filter(id => !ids.includes(id))
       for (const sessionId of ids) {
         if (draft.entries.some(entry => entry.sessionId === sessionId)) continue
-        draft.entries.push({ sessionId, columnId: request.columnId, note: '', source: 'manual', addedAt: now, updatedAt: now, version: 1 })
+        const removed = draft.removedEntries.find(item => item.entry.sessionId === sessionId)
+        draft.entries.push(removed
+          ? { ...removed.entry, columnId: request.columnId, updatedAt: now, version: removed.entry.version + 1 }
+          : { sessionId, columnId: request.columnId, note: '', source: 'manual', addedAt: now, updatedAt: now, version: 1 })
+        draft.removedEntries = draft.removedEntries.filter(item => item.entry.sessionId !== sessionId)
       }
       return
     }
+    if (request.type === 'restore') {
+      if (draft.entries.some(entry => entry.sessionId === request.sessionId)) return
+      if (!draft.excludedSessionIds.includes(request.sessionId)) throw new WorkbenchError('not_removed', '此会话不在已取消关注列表，请刷新后重试')
+      if (!allowedIds?.has(request.sessionId)) throw new WorkbenchError('session_unavailable', '此会话已归档、已删除、属于子代理或暂不可用，无法恢复关注')
+      const removed = draft.removedEntries.find(item => item.entry.sessionId === request.sessionId)
+      const entry = removed
+        ? { ...removed.entry, updatedAt: now, version: removed.entry.version + 1 }
+        : { sessionId: request.sessionId, columnId: 'focus' as const, note: '', source: 'manual' as const, addedAt: now, updatedAt: now, version: 1 }
+      const at = removed?.beforeSessionId
+        ? draft.entries.findIndex(item => item.sessionId === removed.beforeSessionId && item.columnId === entry.columnId)
+        : -1
+      if (at < 0) draft.entries.push(entry)
+      else draft.entries.splice(at, 0, entry)
+      draft.excludedSessionIds = draft.excludedSessionIds.filter(id => id !== request.sessionId)
+      draft.removedEntries = draft.removedEntries.filter(item => item.entry.sessionId !== request.sessionId)
+      return
+    }
     if (request.type === 'unfollow') {
+      const at = draft.entries.findIndex(entry => entry.sessionId === request.sessionId)
+      const entry = draft.entries[at]
+      if (entry && !draft.removedEntries.some(item => item.entry.sessionId === request.sessionId)) {
+        const next = draft.entries.slice(at + 1).find(item => item.columnId === entry.columnId)
+        draft.removedEntries.push({ entry, removedAt: now, ...(next ? { beforeSessionId: next.sessionId } : {}) })
+      }
       draft.entries = draft.entries.filter(entry => entry.sessionId !== request.sessionId)
       if (!draft.excludedSessionIds.includes(request.sessionId)) draft.excludedSessionIds.push(request.sessionId)
       return

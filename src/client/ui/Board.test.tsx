@@ -13,7 +13,7 @@ const client = (values: Partial<ClientState> = {}): ClientState => ({ board: ini
 function markup(state: ClientState): string {
   const controller: BoardControllerFace = {
     subscribe: () => () => {}, getSnapshot: () => state,
-    refresh: async () => {}, command: async () => true, openSession: async () => true, clearError: () => {},
+    refresh: async () => {}, command: async () => true, openSession: async () => true, renameSession: async () => true, clearError: () => {},
   }
   return renderToStaticMarkup(createElement(MyFocusBoard, { controller }))
 }

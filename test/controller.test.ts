@@ -10,10 +10,10 @@ function fixture() {
     assert.deepEqual(Object.keys(payload), ['args'], '真实 RPC payload 只允许 args 信封')
     if (endpoint.endsWith('/mutate')) {
       if (error) return { ok: true, value: { ok: false, error: { message: error } } }
-      board = { ...board, revision: board.revision + 1, settings: { autoCollect: payload.args.request.autoCollect ?? false } }
+      board = { ...board, revision: board.revision + 1, settings: { ...board.settings, autoCollect: payload.args.request.autoCollect ?? board.settings.autoCollect, copySessionName: payload.args.request.includeName ?? board.settings.copySessionName } }
     }
     return { ok: true, value: { ok: true, value: structuredClone(board) } }
-  } }, { snapshot: () => runtimeState, subscribe: cb => { notify = cb; return () => {} }, refresh: async () => {}, open: async id => { opened.push(id) } })
+  } }, { snapshot: () => runtimeState, subscribe: cb => { notify = cb; return () => {} }, refresh: async () => {}, open: async id => { opened.push(id) }, rename: async (id, title) => { if (error) throw new Error(error); runtimeState.sessions.find(s => s.id === id)!.title = title; notify() } })
   const dispose = controller.start()
   return { controller, dispose, runtimeState, opened, notify: () => notify(), setBoard: (next: BoardState) => { board = next }, fail: (message: string) => { error = message } }
 }

@@ -3,7 +3,7 @@ import { PANEL_ID } from '../shared/model.ts'
 
 export const HEADER_SLOT = 'conversation.session.header.actions'
 // 复用入口 ID，通过宿主优先级覆盖显示；注册本身不依赖旧插件存在。
-export const HEADER_OPTIONS = { name: HEADER_SLOT, id: 'personal-workbench', order: -4, priority: -10 } as const
+export const HEADER_OPTIONS = { name: HEADER_SLOT, id: 'personal-workbench', order: 11, priority: -10 } as const
 
 export function registerHeaderEntry(slots: any, layout: { selectPanel(id: string): void }): () => void {
   const HeaderEntry = () => <button type="button" className="dtw-header-entry" title="打开我的任务工作台" aria-label="打开我的任务工作台" onClick={() => layout.selectPanel(PANEL_ID)}>

@@ -1,6 +1,6 @@
 {
   "name": "@ppyang010/dsh-task-workbench",
-  "version": "0.3.4",
+  "version": "0.7.1",
   "description": "DSH 我的任务工作台：跨工作区关注会话，手动整理分类，可选自动纳入，保留原生聊天入口。",
   "type": "module",
   "license": "MIT",
