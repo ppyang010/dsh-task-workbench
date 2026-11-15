@@ -7,7 +7,7 @@ import { RemovedList } from './RemovedList.js'
 
 interface UndoEntry { entry: WatchEntry }
 interface DropPosition { columnId: ColumnId; beforeSessionId?: string; targetSessionId?: string; edge?: 'before' | 'after' }
-type Modal = { type: 'add'; columnId: ColumnId } | { type: 'rules' } | { type: 'removed' } | { type: 'rename'; sessionId: string; title: string }
+type Modal = { type: 'bulk-unfollow'; ids: string[] } | { type: 'add'; columnId: ColumnId } | { type: 'rules' } | { type: 'removed' } | { type: 'rename'; sessionId: string; title: string }
 const MAX_SELECTION = 500
 const PAGE_SIZE = 80
 
@@ -114,6 +114,8 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
   const state = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   // 状态变化可能让卡片跨列重挂载，草稿在看板层保存以免丢失输入。
   const [noteDrafts, setNoteDrafts] = useState<Record<string, NoteDraft>>({})
+  const [selecting, setSelecting] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [query, setQuery] = useState('')
   const [workspace, setWorkspace] = useState('')
   const [status, setStatus] = useState('')
@@ -143,6 +145,15 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
   const disabled = busy || !state.connected
   const error = localError || state.error
   const filtered = !!query.trim() || !!workspace || !!status
+  const selectedIds = [...selected].filter(id => watchedIds.has(id))
+  const selectableIds = visible.map(row => row.entry.sessionId)
+  useEffect(() => { setSelected(new Set()) }, [query, workspace, status])
+  const toggleSelected = (id: string) => setSelected(previous => {
+    const next = new Set([...previous].filter(value => watchedIds.has(value)))
+    if (next.has(id)) next.delete(id)
+    else if (next.size < MAX_SELECTION) next.add(id)
+    return next
+  })
 
   const perform = async (operation: () => Promise<boolean>): Promise<boolean> => {
     if (pendingRef.current || controller.getSnapshot().loading || controller.getSnapshot().saving || !controller.getSnapshot().connected) return false
@@ -250,11 +261,12 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
           <div className="dtw-heading-group">
             <h1>我的关注</h1>
             <div className="dtw-stats" aria-label="已关注会话统计">
-              <span><strong>{rows.length}</strong>已关注</span>
-              {(['running', 'waiting', 'unread', 'idle'] as const).map(item => <span key={item}><i className={`dtw-dot dtw-dot-${item}`} aria-hidden="true" /><strong>{rows.filter(row => row.status === item).length}</strong>{STATUS_LABELS[item]}</span>)}
+              <button type="button" className="dtw-stat-filter" aria-label="显示全部状态的已关注会话" aria-pressed={!status} title="清除状态筛选，保留搜索和工作区筛选" onClick={() => setStatus('')}><strong>{rows.length}</strong>已关注</button>
+              {(['running', 'waiting', 'unread', 'idle'] as const).map(item => <button type="button" className="dtw-stat-filter" key={item} aria-label={`筛选${STATUS_LABELS[item]}会话`} aria-pressed={status === item} title={status === item ? '再次点击取消状态筛选' : `仅显示${STATUS_LABELS[item]}，保留搜索和工作区筛选`} onClick={() => setStatus(previous => previous === item ? '' : item)}><i className={`dtw-dot dtw-dot-${item}`} aria-hidden="true" /><strong>{rows.filter(row => row.status === item).length}</strong>{STATUS_LABELS[item]}</button>)}
             </div>
           </div>
           <div className="dtw-header-actions">
+            <button type="button" className="dtw-button" disabled={disabled || !!openingId || Object.keys(noteDrafts).length > 0} aria-pressed={selecting} onClick={() => { clearDrag(); setSelected(new Set()); setSelecting(value => !value) }}>{selecting ? '退出多选' : '多选'}</button>
             <button type="button" className="dtw-button" disabled={state.loading} onClick={() => { setLocalError(undefined); controller.clearError(); setModal({ type: 'removed' }) }}>已取消关注{state.board.excludedSessionIds.length > 0 ? `（${state.board.excludedSessionIds.length}）` : ''}</button>
             <div className="dtw-auto">
               <span className="dtw-auto-title">自动纳入</span>
@@ -276,6 +288,13 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
           <select value={status} onChange={event => setStatus(event.target.value)} aria-label="按运行状态筛选已关注会话"><option value="">全部运行状态</option>{Object.entries(STATUS_LABELS).map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select>
           <button type="button" className="dtw-icon-button dtw-refresh" disabled={busy} onClick={() => { void refresh() }} title="刷新关注与会话目录" aria-label="刷新看板"><Icon name="refresh" /></button>
         </div>
+        {selecting && <div className="dtw-bulk-toolbar" role="region" aria-label="批量管理关注">
+          <span role="status">已选 {selectedIds.length} 条（最多 {MAX_SELECTION} 条）{selectedIds.some(id => !visibleIds.has(id)) && `，其中 ${selectedIds.filter(id => !visibleIds.has(id)).length} 条当前不可见`}</span>
+          <button type="button" className="dtw-button dtw-button-small" disabled={disabled || !selectableIds.length} onClick={() => setSelected(new Set(selectableIds.slice(0, MAX_SELECTION)))}>全选筛选结果{selectableIds.length > MAX_SELECTION ? '（前500条）' : ''}</button>
+          <button type="button" className="dtw-button dtw-button-small" disabled={disabled || !selectedIds.length} onClick={() => setSelected(new Set())}>清空选择</button>
+          <button type="button" className="dtw-button dtw-button-danger dtw-button-small" disabled={disabled || !selectedIds.length} onClick={() => { controller.clearError(); setLocalError(undefined); setModal({ type: 'bulk-unfollow', ids: selectedIds }) }}>取消关注所选</button>
+          <span className="dtw-bulk-hint">全选包含折叠分组；更改筛选会清空选择。</span>
+        </div>}
       </header>
       {!state.connected && <div className="dtw-banner dtw-banner-warning" role="status"><Icon name="warning" /><p>与 DSH 的连接已断开。现有关注仍保留，重新连接后可继续整理。</p><button type="button" className="dtw-text-button" disabled={busy} onClick={() => { void refresh() }}>重新连接</button></div>}
       {state.connected && !state.runtimeReady && <div className="dtw-banner" role="status"><Icon name="refresh" /><p>会话目录正在同步，已有关注记录会继续保留。</p></div>}
@@ -313,6 +332,7 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
                     </button>
                     <div className="dtw-cards" id={groupBodyId} hidden={folded}>
                       {matched.map(row => <SessionCard
+                        selecting={selecting} selected={selected.has(row.entry.sessionId)} onSelect={() => toggleSelected(row.entry.sessionId)}
                         draft={noteDrafts[row.entry.sessionId] ?? null} setDraft={draft => setNoteDrafts(previous => { const next = { ...previous }; if (draft) next[row.entry.sessionId] = draft; else delete next[row.entry.sessionId]; return next })}
                         key={row.entry.sessionId} row={row} columnRows={group.rows} busy={disabled} opening={openingId === row.entry.sessionId} dragging={draggingId === row.entry.sessionId}
                         dropBefore={drop?.columnId === column.id && drop.targetSessionId === row.entry.sessionId && drop.edge === 'before'}
@@ -340,6 +360,18 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
       if (success) { revealColumn(columnId); ids.forEach(id => revealGroup(columnId, id)); setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) }
       return success
     }} />}
+    {modal?.type === 'bulk-unfollow' && <Dialog title="批量取消关注" description={`将取消 ${modal.ids.length} 条所选会话的关注，不会停止、归档或删除原会话。可从「已取消关注」恢复。`} busy={busy} onClose={closeModal}>
+      <div className="dtw-bulk-preview"><ul>{modal.ids.map(id => <li key={id}>{rows.find(row => row.entry.sessionId === id)?.title ?? id}</li>)}</ul>
+        {error && <p role="alert">{error}</p>}
+        {!state.connected && <p role="status">连接已断开，恢复后可重试。</p>}
+      </div>
+      <footer className="dtw-dialog-footer"><button type="button" className="dtw-button" disabled={busy} onClick={closeModal}>返回</button><button type="button" className="dtw-button dtw-button-danger" disabled={disabled} onClick={() => { const ids = modal.ids; void (async () => {
+        if (await command({ type: 'unfollowMany', sessionIds: ids })) {
+          setSelected(new Set()); setSelecting(false); setModal(null); setUndo(null)
+          setNotice('批量取消关注已保存；原会话保留，可从「已取消关注」恢复。已被其他窗口取消的记录自动跳过。')
+        }
+      })() }}>{busy ? '正在保存…' : `确认取消 ${modal.ids.length} 条关注`}</button></footer>
+    </Dialog>}
     {modal?.type === 'rename' && <Dialog title="修改会话名" description="保存后同步更新 DSH 原生会话名称。" busy={busy} onClose={closeModal}>
       <form className="dtw-rename-form" onSubmit={event => {
         event.preventDefault()
@@ -364,6 +396,7 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
         <section><strong>整理与排序</strong><p>每列按工作区分组，点击工作区组头可折叠。拖拽支持组内排序和跨分类移动，不改变会话所属工作区；拖入其他工作区区域时，卡片仍归入自己的工作区。宽列同组内从左到右、从上到下排列；上移、下移仅作用于同组。</p></section>
         <section><strong>折叠分类</strong><p>分类标题旁的箭头可收起或展开该列，至少保留一个展开分类。向折叠列拖入卡片后会展开，折叠只改变显示布局。</p></section>
         <section><strong>默认关闭自动纳入</strong><p>开启后，普通会话开始新一轮时加入「我的关注」，包括已有会话续聊。只打开查看不会纳入，也不会回扫历史；关闭时保留已有关注。</p></section>
+        <section><strong>归档即自动取消关注</strong><p>原会话归档后自动移入已取消关注，已有归档关注也会处理。保留原分类与已保存备注；恢复归档后不会自动重新关注，需手动恢复。未就绪或缺失不视为归档。</p></section>
         <section><strong>取消关注后自动跳过</strong><p>取消关注后可从顶部「已取消关注」查看或恢复，分类、已保存备注与可恢复的顺序会保留。升级前的历史记录仅保留 ID，恢复至我的关注。原会话仍在原工作区，自动纳入会跳过排除项，不会停止、归档或删除原会话。</p></section>
         <section><strong>等我处理</strong><p>展示手动放入的会话，以及我的关注中等待回应、完成未读的会话。自动项只显示一次，处理后回原列；暂时搁置不参与归集。卡片下拉显示原分类，选择等我处理可长期保留，选择暂时搁置可暂停提醒。自动项按原分类顺序展示，上下移动请先设为手动待处理。</p></section>
         <section><strong>状态与备注</strong><p>自动展示不修改人工分类、顺序或备注。「完成未读」沿用 DSH 的页面内存提醒，不代表任务验收完成。长备注可展开，编辑入口在卡片的「更多操作」中。</p></section>

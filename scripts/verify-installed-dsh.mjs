@@ -84,5 +84,12 @@ try {
   assert.equal(result.value.entries.find(entry => entry.sessionId === saved.sessionId).note, '真实存储重开后的取消快照验证')
   assert.ok(!result.value.excludedSessionIds.includes(saved.sessionId))
   assert.ok(!result.value.removedEntries.some(item => item.entry.sessionId === saved.sessionId))
-  console.log(JSON.stringify({ dshVersion: nativeVersion, passed: ['真实 Cordis 插件注入', '真实 Typert Gateway 认证 owner 调用及参数校验', '真实 storageDomain + JSON 原子落盘', '普通 fork 自动纳入且不改变已有分类', '关闭后重新挂载保留取消快照、排除及开关，再原子恢复备注与分类'], scope: '使用已安装 DSH 官方服务和合成会话；不接触运行中的 GUI 或真实会话。' }, null, 2))
+  current.ctx.get('workspaceRegistry').archivedSessionIds = [saved.sessionId]
+  result = await current.call('read')
+  assert.ok(!result.value.entries.some(entry => entry.sessionId === saved.sessionId))
+  assert.equal(result.value.removedEntries.find(item => item.entry.sessionId === saved.sessionId).entry.note, '真实存储重开后的取消快照验证')
+  current.ctx.get('workspaceRegistry').archivedSessionIds = []
+  result = await current.call('read')
+  assert.ok(!result.value.entries.some(entry => entry.sessionId === saved.sessionId), '取消归档不自动恢复关注')
+  console.log(JSON.stringify({ archiveAutoUnfollow: '真实 RPC 读取清理与取消归档不复活通过', dshVersion: nativeVersion, passed: ['真实 Cordis 插件注入', '真实 Typert Gateway 认证 owner 调用及参数校验', '真实 storageDomain + JSON 原子落盘', '普通 fork 自动纳入且不改变已有分类', '关闭后重新挂载保留取消快照、排除及开关，再原子恢复备注与分类'], scope: '使用已安装 DSH 官方服务和合成会话；不接触运行中的 GUI 或真实会话。' }, null, 2))
 } finally { await current.ctx.fiber.dispose() }

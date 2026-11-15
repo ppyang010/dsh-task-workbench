@@ -43,6 +43,13 @@ export class WatchStore {
   }
   private apply(draft: BoardState, request: Command, allowedIds?: ReadonlySet<string>): void {
     const now = this.clock()
+    if (request.type === 'unfollowMany') {
+      // 同一草稿内处理并只保存一次；已取消项跳过，避免部分成功。
+      for (const sessionId of new Set(request.sessionIds)) {
+        if (draft.entries.some(entry => entry.sessionId === sessionId)) this.apply(draft, { type: 'unfollow', sessionId }, allowedIds)
+      }
+      return
+    }
     if (request.type === 'settings') { draft.settings.autoCollect = request.autoCollect; return }
     if (request.type === 'copySettings') { draft.settings.copySessionName = request.includeName; return }
     if (request.type === 'add') {
@@ -105,6 +112,14 @@ export class WatchStore {
     const at = anchor ? draft.entries.findIndex(item => item.sessionId === anchor.sessionId) : -1
     if (at < 0) draft.entries.push(entry)
     else draft.entries.splice(at, 0, entry)
+  }
+  /** 只根据宿主明确的归档集合移除关注；在串行写队列内读取最新集合。 */
+  reconcileArchived(getArchivedIds: () => readonly string[]): Promise<BoardState> {
+    return this.enqueue(draft => {
+      const archived = new Set(getArchivedIds())
+      const ids = draft.entries.filter(entry => archived.has(entry.sessionId)).map(entry => entry.sessionId)
+      for (const sessionId of ids) this.apply(draft, { type: 'unfollow', sessionId })
+    })
   }
   /** 自动纳入只新增关注，既不重排已有卡片，也不复活手动排除项。 */
   autoCollect(sessionId: string): Promise<BoardState> {

@@ -1,4 +1,5 @@
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
+import { watchArchived } from './archive-watch.ts'
 import { RPC_NAMESPACE } from '../shared/model.ts'
 import { openWatchStore, WorkbenchError } from './store.ts'
 import { WorkbenchService, type HostServices } from './service.ts'
@@ -10,7 +11,11 @@ export const inject = ['storageDomain', 'sessionQuery', 'workspaceRegistry']
 class WorkbenchRemote extends TypertRemoteService {
   constructor(ctx: any, private ready: Promise<WorkbenchService>) { super(ctx, RPC_NAMESPACE) }
   @Remote('read')
-  async read() { return this.respond(async () => (await this.ready).read()) }
+  async read() { return this.respond(async () => {
+    const service = await this.ready
+    await service.reconcileArchived()
+    return service.read()
+  }) }
   @Remote('mutate')
   async mutate(request: unknown) { return this.respond(async () => (await this.ready).mutate(request)) }
   private async respond(operation: () => Promise<unknown>) {
@@ -34,7 +39,14 @@ export function apply(ctx: any): void {
     if (event.type !== 'turn/start') return
     void ready.then(service => service.onSessionEvent(session, event)).catch(() => { ctx.logger?.warn('自动纳入暂未保存，请检查关注存储') })
   })
+  let stopped = false
+  let stopWatching: (() => Promise<void>) | undefined
+  void ready.then(service => {
+    if (!stopped) stopWatching = watchArchived(service, () => { ctx.logger?.warn('归档自动取消关注暂未保存，将在下次同步重试') })
+  }).catch(() => { /* 初始化错误由 ready 统一记录。 */ })
   ctx.effect(() => async () => {
+    stopped = true
+    await stopWatching?.()
     try { await (await opened).close() } catch { /* 已记录初始化失败，不覆盖原有数据。 */ }
   })
 }

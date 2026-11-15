@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const VERSION = '0.7.1'
+export const VERSION = '0.9.0'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'
@@ -59,6 +59,7 @@ export function initialState(): BoardState {
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('add'), sessionIds: z.array(sessionIdSchema).min(1).max(500), columnId: columnSchema }).strict(),
   z.object({ type: z.literal('unfollow'), sessionId: sessionIdSchema }).strict(),
+  z.object({ type: z.literal('unfollowMany'), sessionIds: z.array(sessionIdSchema).min(1).max(500) }).strict(),
   z.object({ type: z.literal('restore'), sessionId: sessionIdSchema }).strict(),
   z.object({ type: z.literal('move'), sessionId: sessionIdSchema, columnId: columnSchema, beforeSessionId: sessionIdSchema.optional() }).strict(),
   z.object({ type: z.literal('note'), sessionId: sessionIdSchema, note: z.string().max(2000), expectedVersion: z.number().int().min(1) }).strict(),

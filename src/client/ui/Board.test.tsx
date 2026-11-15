@@ -18,6 +18,28 @@ function markup(state: ClientState): string {
   return renderToStaticMarkup(createElement(MyFocusBoard, { controller }))
 }
 
+test('精简卡片将分类和来源收进菜单，状态位于标题右侧并保留打开与空闲状态', () => {
+  const html = markup(client({ board: { ...initialState(), entries: [entry('a', { source: 'auto', note: '备注内容' })] }, sessions: [session('a')] }))
+  const card = html.match(/<article[\s\S]*?<\/article>/)?.[0] ?? ''
+  const menu = card.slice(card.indexOf('<details'))
+  assert.match(menu, /移动到<select/)
+  assert.match(menu, /取消关注/)
+  assert.equal((card.match(/aria-label="取消关注：会话 a"/g) ?? []).length, 1)
+  assert.doesNotMatch(card, /dtw-card-unfollow/)
+  assert.match(html, />多选<\/button>/)
+  assert.match(menu, /来源：自动纳入/)
+  assert.doesNotMatch(card.slice(0, card.indexOf('<details')), /<select|dtw-source/)
+  assert.match(card, /class="dtw-card-head">[\s\S]*?<\/h3><span class="dtw-status dtw-status-idle"/)
+  assert.match(card, /<footer class="dtw-card-actions"><time class="dtw-card-updated"/)
+  assert.match(card, /不等同于上次 AI 回复时间/)
+  assert.doesNotMatch(card, /dtw-card-meta/)
+  assert.equal((card.match(/<time/g) ?? []).length, 1)
+  assert.equal((card.match(/dtw-status-idle/g) ?? []).length, 1)
+  assert.match(card, /打开对话/)
+  assert.match(card, /备注内容/)
+  assert.match(card, /title="会话 a"/)
+})
+
 test('工作区按 ID 分组，重名不合并，缺失记录保留且组内顺序不变', () => {
   const state = client({ board: { ...initialState(), entries: ['a', 'b', 'c', 'missing'].map(id => entry(id)) }, sessions: [session('a'), session('b', { workspaceId: 'work-2' }), session('c')] })
   const groups = groupWorkspaces(getBoardRows(state))
@@ -122,6 +144,15 @@ test('会话标题与备注按文本转义，缺失会话的打开按钮禁用',
   assert.match(html, /class="dtw-card-title dtw-open-button" disabled=""/)
   assert.match(html, /class="dtw-button dtw-card-open" disabled=""/)
   assert.match(html, /aria-label="打开对话：/)
+})
+
+test('统计项使用可键盘操作的筛选按钮，默认选中全部且零计数仍可点击', () => {
+  const html = markup(client())
+  assert.equal((html.match(/class="dtw-stat-filter"/g) ?? []).length, 5)
+  assert.match(html, /aria-label="显示全部状态的已关注会话" aria-pressed="true"/)
+  for (const label of ['运行中', '等待回应', '完成未读', '空闲']) {
+    assert.ok(html.includes(`aria-label="筛选${label}会话" aria-pressed="false"`))
+  }
 })
 
 test('顶部空闲统计仅计入已关注且状态确认为空闲的会话', () => {

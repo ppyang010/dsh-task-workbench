@@ -13,9 +13,13 @@ export function isChildSession(header: SessionHeader): boolean {
 export class WorkbenchService {
   constructor(private store: WatchStore, private services: HostServices) {}
   read(): BoardState { return this.store.snapshot() }
+  async reconcileArchived(): Promise<void> {
+    await this.store.reconcileArchived(() => this.services.workspaceRegistry.archivedSessionIds)
+  }
   async mutate(raw: unknown): Promise<BoardState> {
     const result = commandSchema.safeParse(raw)
     if (!result.success) throw new WorkbenchError('invalid_input', '操作参数无效，请刷新后重试')
+    await this.reconcileArchived()
     const request = result.data
     if (request.type !== 'add' && request.type !== 'restore') return this.store.command(request)
     // 已关注的重复恢复直接交由串行存储判定，不要求目录此刻仍可用。
