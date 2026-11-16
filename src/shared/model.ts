@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const VERSION = '0.9.0'
+export const VERSION = '0.10.0'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'
@@ -92,7 +92,10 @@ export interface ClientState {
   runtimeReady: boolean
   error?: string
 }
+export interface ArchiveItemResult { sessionId: string; title: string; ok: boolean; message: string }
+export interface ArchiveBatchResult { items: ArchiveItemResult[]; syncWarning?: string }
 export interface BoardControllerFace {
+  archiveSessions?(sessionIds: string[]): Promise<ArchiveBatchResult>
   subscribe(listener: () => void): () => void
   getSnapshot(): ClientState
   refresh(): Promise<void>

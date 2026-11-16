@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react'
-import { COLUMNS, STATUS_LABELS, type BoardControllerFace, type ColumnId, type Command, type SessionView, type WatchEntry } from '../../shared/model.js'
+import { COLUMNS, STATUS_LABELS, type ArchiveBatchResult, type BoardControllerFace, type ColumnId, type Command, type SessionView, type WatchEntry } from '../../shared/model.js'
 import { Icon } from './Icons.js'
 import { moveAnchor, formatUpdatedAt, getAddDisabledReason, getBoardRows, groupWorkspaces, workspaceKey, locateDropTarget, matchesRow, matchesSession, uniqueSessions, workspaceOptions, type BoardRow } from './board-helpers.js'
 import { SessionCard, StatusBadge, type NoteDraft } from './SessionCard.js'
@@ -7,7 +7,7 @@ import { RemovedList } from './RemovedList.js'
 
 interface UndoEntry { entry: WatchEntry }
 interface DropPosition { columnId: ColumnId; beforeSessionId?: string; targetSessionId?: string; edge?: 'before' | 'after' }
-type Modal = { type: 'bulk-unfollow'; ids: string[] } | { type: 'add'; columnId: ColumnId } | { type: 'rules' } | { type: 'removed' } | { type: 'rename'; sessionId: string; title: string }
+type Modal = { type: 'archive'; targets: Array<{ id: string; title: string }>; result?: ArchiveBatchResult } | { type: 'bulk-unfollow'; ids: string[] } | { type: 'add'; columnId: ColumnId } | { type: 'rules' } | { type: 'removed' } | { type: 'rename'; sessionId: string; title: string }
 const MAX_SELECTION = 500
 const PAGE_SIZE = 80
 
@@ -171,6 +171,26 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
   }
   const command = (value: Command) => perform(() => controller.command(value))
   const closeModal = () => { if (!busy) setModal(null) }
+  const requestArchive = (ids: string[]) => {
+    controller.clearError(); setLocalError(undefined)
+    setModal({ type: 'archive', targets: ids.map(id => ({ id, title: rows.find(row => row.entry.sessionId === id)?.title ?? id })) })
+  }
+  const submitArchive = async () => {
+    if (modal?.type !== 'archive' || !controller.archiveSessions) return
+    const current = modal
+    const ids = current.result ? current.result.items.filter(item => !item.ok).map(item => item.sessionId) : current.targets.map(target => target.id)
+    if (!ids.length) return
+    await perform(async () => {
+      const result = await controller.archiveSessions!(ids)
+      const latest = new Map(result.items.map(item => [item.sessionId, item]))
+      const items = current.result ? current.result.items.map(item => latest.get(item.sessionId) ?? item) : result.items
+      setModal({ ...current, result: { ...result, items } })
+      const succeeded = new Set(items.filter(item => item.ok).map(item => item.sessionId))
+      setSelected(previous => new Set([...previous].filter(id => !succeeded.has(id))))
+      setUndo(null)
+      return true
+    })
+  }
   const refresh = async () => {
     if (pendingRef.current || busy) return
     pendingRef.current = true
@@ -293,6 +313,7 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
           <button type="button" className="dtw-button dtw-button-small" disabled={disabled || !selectableIds.length} onClick={() => setSelected(new Set(selectableIds.slice(0, MAX_SELECTION)))}>全选筛选结果{selectableIds.length > MAX_SELECTION ? '（前500条）' : ''}</button>
           <button type="button" className="dtw-button dtw-button-small" disabled={disabled || !selectedIds.length} onClick={() => setSelected(new Set())}>清空选择</button>
           <button type="button" className="dtw-button dtw-button-danger dtw-button-small" disabled={disabled || !selectedIds.length} onClick={() => { controller.clearError(); setLocalError(undefined); setModal({ type: 'bulk-unfollow', ids: selectedIds }) }}>取消关注所选</button>
+          <button type="button" className="dtw-button dtw-button-small" disabled={disabled || !!openingId || !state.runtimeReady || !selectedIds.length || !controller.archiveSessions} onClick={() => requestArchive(selectedIds)}>归档所选</button>
           <span className="dtw-bulk-hint">全选包含折叠分组；更改筛选会清空选择。</span>
         </div>}
       </header>
@@ -339,6 +360,7 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
                         dropAfter={drop?.columnId === column.id && drop.targetSessionId === row.entry.sessionId && drop.edge === 'after'}
                         onOpen={() => { void openSession(row.entry.sessionId) }} onUnfollow={() => { void unfollow(row.entry.sessionId) }}
                         onMove={(columnId, beforeSessionId) => { void move(row.entry.sessionId, columnId, beforeSessionId) }}
+                        onArchive={controller.archiveSessions ? () => requestArchive([row.entry.sessionId]) : undefined}
                         onRename={() => { controller.clearError(); setLocalError(undefined); setModal({ type: 'rename', sessionId: row.entry.sessionId, title: row.title }) }}
                         onNote={(note, expectedVersion) => command({ type: 'note', sessionId: row.entry.sessionId, note, expectedVersion })}
                         onDragStart={event => {
@@ -360,6 +382,16 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
       if (success) { revealColumn(columnId); ids.forEach(id => revealGroup(columnId, id)); setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) }
       return success
     }} />}
+    {modal?.type === 'archive' && <Dialog title={modal.result ? '归档结果' : '归档会话'} description="使用 DSH 原生归档，成功后自动取消关注，不删除会话。运行中的活动不会被强制停止；批量逐条执行，可能部分成功。恢复归档请使用 DSH 原生入口。" busy={busy} onClose={closeModal}>
+      <div className="dtw-bulk-preview">
+        {modal.result ? <><p role="status">已归档 {modal.result.items.filter(item => item.ok).length} 条，失败 {modal.result.items.filter(item => !item.ok).length} 条。</p><ul>{modal.result.items.map(item => <li key={item.sessionId}><strong>{item.title}</strong>：{item.message}</li>)}</ul>{modal.result.syncWarning && <p role="alert">{modal.result.syncWarning}</p>}</> : <ul>{modal.targets.map(target => <li key={target.id}>{target.title}</li>)}</ul>}
+        {error && <p role="alert">{error}</p>}
+        {!state.connected && <p role="status">连接已断开，请恢复连接后重试。</p>}
+      </div>
+      <footer className="dtw-dialog-footer"><button type="button" className="dtw-button" disabled={busy} onClick={closeModal}>{modal.result ? '关闭' : '取消'}</button>
+        {(!modal.result || modal.result.items.some(item => !item.ok)) && <button type="button" className="dtw-button dtw-button-primary" disabled={disabled || !controller.archiveSessions} onClick={() => { void submitArchive() }}>{busy ? '正在归档…' : modal.result ? '重试失败项' : `确认归档 ${modal.targets.length} 条会话`}</button>}
+      </footer>
+    </Dialog>}
     {modal?.type === 'bulk-unfollow' && <Dialog title="批量取消关注" description={`将取消 ${modal.ids.length} 条所选会话的关注，不会停止、归档或删除原会话。可从「已取消关注」恢复。`} busy={busy} onClose={closeModal}>
       <div className="dtw-bulk-preview"><ul>{modal.ids.map(id => <li key={id}>{rows.find(row => row.entry.sessionId === id)?.title ?? id}</li>)}</ul>
         {error && <p role="alert">{error}</p>}
@@ -396,6 +428,7 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
         <section><strong>整理与排序</strong><p>每列按工作区分组，点击工作区组头可折叠。拖拽支持组内排序和跨分类移动，不改变会话所属工作区；拖入其他工作区区域时，卡片仍归入自己的工作区。宽列同组内从左到右、从上到下排列；上移、下移仅作用于同组。</p></section>
         <section><strong>折叠分类</strong><p>分类标题旁的箭头可收起或展开该列，至少保留一个展开分类。向折叠列拖入卡片后会展开，折叠只改变显示布局。</p></section>
         <section><strong>默认关闭自动纳入</strong><p>开启后，普通会话开始新一轮时加入「我的关注」，包括已有会话续聊。只打开查看不会纳入，也不会回扫历史；关闭时保留已有关注。</p></section>
+        <section><strong>归档会话</strong><p>单条在更多菜单选择归档会话，批量在多选后选择归档所选。确认后调用 DSH 原生归档，不强制停止运行；结果逐条显示，失败项可重试。恢复归档使用 DSH 原生入口。</p></section>
         <section><strong>归档即自动取消关注</strong><p>原会话归档后自动移入已取消关注，已有归档关注也会处理。保留原分类与已保存备注；恢复归档后不会自动重新关注，需手动恢复。未就绪或缺失不视为归档。</p></section>
         <section><strong>取消关注后自动跳过</strong><p>取消关注后可从顶部「已取消关注」查看或恢复，分类、已保存备注与可恢复的顺序会保留。升级前的历史记录仅保留 ID，恢复至我的关注。原会话仍在原工作区，自动纳入会跳过排除项，不会停止、归档或删除原会话。</p></section>
         <section><strong>等我处理</strong><p>展示手动放入的会话，以及我的关注中等待回应、完成未读的会话。自动项只显示一次，处理后回原列；暂时搁置不参与归集。卡片下拉显示原分类，选择等我处理可长期保留，选择暂时搁置可暂停提醒。自动项按原分类顺序展示，上下移动请先设为手动待处理。</p></section>

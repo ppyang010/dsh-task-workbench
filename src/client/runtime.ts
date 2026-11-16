@@ -16,6 +16,7 @@ export interface RuntimeFace {
   refresh(): Promise<void>
   open(sessionId: string): Promise<void>
   rename(sessionId: string, title: string): Promise<void>
+  archive?(sessionId: string): Promise<void>
 }
 const pendingLabels: Record<string, string> = { approval: '等待审批', 'plan-review': '等待方案确认', question: '等待回答' }
 
@@ -77,6 +78,17 @@ export function createRuntime(ctx: RuntimeContext): RuntimeFace {
     },
     refresh: async () => { await sessions.refresh() },
     open: async id => { await navigation.openSession(id) },
+    archive: async id => {
+      // 与 DSH 侧栏共用原生 workspaces 归档服务；不调用 clearMain，批量结果留在工作台。
+      const native = ctx.get('workspaces')
+      if (typeof native?.archiveSession !== 'function') throw new Error('当前 DSH 不支持工作台归档，请使用原生菜单')
+      try { await native.archiveSession(id, { stopActivity: false }) }
+      catch (error) {
+        const reason = error as { rpcError?: { code?: string }; message?: string }
+        if (reason?.rpcError?.code === 'workspace/session-active') throw new Error('会话仍有运行中的任务或活动，未归档；请结束后重试')
+        throw new Error(reason?.message || '原生归档失败，请刷新后确认状态')
+      }
+    },
     rename: async (id, title) => {
       // 沿用宿主侧边栏重命名调用链，由 using 负责引用的取得与释放。
       const result = await ctx.get('sessions').using(id, { source: 'workspaceOperation' }, (reference: { binding: { session: { rename(title: string): Promise<{ ok: boolean; error?: { message: string } }> } } }) => reference.binding.session.rename(title))

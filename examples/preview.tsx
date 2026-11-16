@@ -39,6 +39,7 @@ const controller = new BoardController({ call: async (_channel, method, payload:
   await new Promise(resolve => setTimeout(resolve, 80))
   if (method.endsWith('/mutate') && failNext) { failNext = false; return { ok: true, value: { ok: false, error: { message: '模拟保存失败：草稿保留，请再次保存' } } } }
   try {
+    await service.reconcileArchived()
     const value = method.endsWith('/mutate') ? await service.mutate(payload.args.request) : service.read()
     document.documentElement.dataset.demoRevision = String(value.revision)
     return { ok: true, value: { ok: true, value } }
@@ -48,6 +49,14 @@ const controller = new BoardController({ call: async (_channel, method, payload:
   snapshot: () => runtime,
   subscribe: listener => { observers.add(listener); return () => { observers.delete(listener) } },
   refresh: async () => { publish() },
+  archive: async id => {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    if (failNext) { failNext = false; throw new Error('模拟归档失败，请重试') }
+    const session = runtime.sessions.find(s => s.id === id)!
+    if (session.status === 'running' || session.status === 'waiting') throw new Error('会话仍有运行中的任务或活动，未归档；请结束后重试')
+    services.workspaceRegistry.archivedSessionIds.push(id)
+    session.archived = true; session.openable = false; publish()
+  },
   rename: async (id, title) => {
     await new Promise(resolve => setTimeout(resolve, 150))
     if (failNext) { failNext = false; throw new Error('模拟改名失败：草稿保留，请再次保存') }

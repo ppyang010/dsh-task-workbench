@@ -23,6 +23,7 @@ export interface SessionCardProps {
   dropAfter: boolean
   onOpen: () => void
   onRename: () => void
+  onArchive?: () => void
   onUnfollow: () => void
   onMove: (columnId: ColumnId, beforeSessionId?: string) => void
   onNote: (note: string, version: number) => Promise<boolean>
@@ -30,7 +31,7 @@ export interface SessionCardProps {
   onDragEnd: () => void
 }
 
-export function SessionCard({ selecting = false, selected = false, onSelect, draft, setDraft, row, columnRows, busy, opening, dragging, dropBefore, dropAfter, onOpen, onRename, onUnfollow, onMove, onNote, onDragStart, onDragEnd }: SessionCardProps) {
+export function SessionCard({ selecting = false, selected = false, onSelect, draft, setDraft, row, columnRows, busy, opening, dragging, dropBefore, dropAfter, onOpen, onRename, onArchive, onUnfollow, onMove, onNote, onDragStart, onDragEnd }: SessionCardProps) {
   const autoWaiting = row.displayColumnId !== row.entry.columnId
   const sortableRows = columnRows.filter(item => item.entry.columnId === row.displayColumnId)
   const [expanded, setExpanded] = useState(false)
@@ -137,6 +138,7 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
           <button type="button" disabled={disabled} onClick={editNote} aria-label={`${row.entry.note ? '编辑' : '添加'}备注：${row.title}`}><Icon name="edit" />{row.entry.note ? '编辑备注' : '添加备注'}</button>
           <button type="button" disabled={disabled || index <= 0} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index - 1]?.entry.sessionId))} aria-label={`上移：${row.title}`}><Icon name="up" />上移</button>
           <button type="button" disabled={disabled || index < 0 || index >= sortableRows.length - 1} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index + 2]?.entry.sessionId))} aria-label={`下移：${row.title}`}><Icon name="down" />下移</button>
+          <button type="button" disabled={disabled || opening || !!row.unavailableReason || !onArchive} onClick={() => menuAction(() => onArchive?.())} aria-label={`归档会话：${row.title}`} title="调用 DSH 原生归档；运行中的活动不会被强制停止"><Icon name="folder" />归档会话</button>
           <button type="button" className="dtw-menu-danger" disabled={disabled} onClick={() => menuAction(onUnfollow)} aria-label={`取消关注：${row.title}`}><Icon name="close" />取消关注</button>
         </div>
       </details>

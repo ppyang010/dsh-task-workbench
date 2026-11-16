@@ -1,4 +1,4 @@
-import { RPC_NAMESPACE, initialState, stateSchema, type BoardState, type BoardControllerFace, type ClientState, type Command, type SessionView } from '../shared/model.ts'
+import { RPC_NAMESPACE, initialState, stateSchema, sessionIdSchema, type ArchiveBatchResult, type BoardState, type BoardControllerFace, type ClientState, type Command, type SessionView } from '../shared/model.ts'
 import type { RuntimeFace } from './runtime.ts'
 
 export interface RemoteFace { call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<any> }
@@ -105,6 +105,37 @@ export class BoardController implements BoardControllerFace {
       return true
     } catch (error) { this.patch({ error: error instanceof Error ? error.message : '会话名未保存，请稍后重试' }); return false }
     finally { this.patch({ saving: false }) }
+  }
+  async archiveSessions(sessionIds: string[]): Promise<ArchiveBatchResult> {
+    if (this.stopped || this.state.saving || this.state.loading) throw new Error('正在处理其他操作，请稍后重试')
+    if (!sessionIds.length || sessionIds.length > 500 || sessionIds.some(id => !sessionIdSchema.safeParse(id).success)) throw new Error('请选择 1–500 条有效会话')
+    const targets = [...new Set(sessionIds)].map(id => ({ id, title: this.state.sessions.find(s => s.id === id)?.title ?? id }))
+    const result: ArchiveBatchResult = { items: [] }
+    this.patch({ saving: true, error: undefined })
+    try {
+      for (const { id, title } of targets) {
+        try {
+          if (this.stopped || !this.state.connected) throw new Error('连接已断开，未继续归档；请刷新确认后重试')
+          this.syncRuntime()
+          const target = this.state.sessions.find(s => s.id === id)
+          if (!this.state.runtimeReady || !target || target.missing || target.subagent) throw new Error('会话目录未就绪或会话不可用，未归档')
+          if (target.archived) { result.items.push({ sessionId: id, title, ok: true, message: '已归档，无需重复操作' }); continue }
+          if (!target.openable) throw new Error('会话格式不兼容或不可用，未归档')
+          if (!this.runtime.archive) throw new Error('当前 DSH 不支持工作台归档')
+          // 不以客户端的空闲状态代替原生活动检查，也不强制停止。
+          await this.runtime.archive(id)
+          result.items.push({ sessionId: id, title, ok: true, message: '已归档' })
+        } catch (error) {
+          result.items.push({ sessionId: id, title, ok: false, message: error instanceof Error ? error.message : '归档失败，请刷新确认后重试' })
+        }
+      }
+      this.syncRuntime()
+      // 归档与关注存储不是同一事务；成功后单独同步，失败不谎报原生归档失败。
+      await this.inflight
+      await this.refresh()
+      if (this.state.error) result.syncWarning = `归档结果已记录，但关注同步失败：${this.state.error}。请稍后刷新；不要重复归档成功项。`
+      return result
+    } finally { this.patch({ saving: false }) }
   }
   clearError(): void { this.patch({ error: undefined }) }
   dispose(): void {
