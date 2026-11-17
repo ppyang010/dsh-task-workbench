@@ -5,6 +5,7 @@ import { createRuntime, openNewSessionPage } from './runtime.ts'
 import { MyFocusBoard } from './ui/Board.tsx'
 import { registerHeaderEntry } from './header-entry.tsx'
 import { registerSessionCopy } from './session-copy.tsx'
+import { installChatBackground } from './chat-background.ts'
 import styles from './ui/styles.css'
 
 export const name = 'ppyang010-task-workbench/client'
@@ -17,6 +18,7 @@ export function apply(ctx: any): void {
     sheet.textContent = styles
     document.head.append(sheet)
     const disposers: Array<() => void> = [() => sheet.remove(), controller.start()]
+    disposers.push(installChatBackground(controller))
     const slots = ctx.get('slots')
     const Page = () => {
       React.useEffect(() => controller.activate(), [])

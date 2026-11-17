@@ -1,4 +1,5 @@
 import type { RuntimeSnapshot, RuntimeStatus, SessionView } from '../shared/model.ts'
+import { preserveArchivePanel } from './archive-navigation.ts'
 
 export interface Source<T> { getSnapshot(): T; subscribe(listener: () => void): () => void }
 export interface SessionRow {
@@ -79,15 +80,16 @@ export function createRuntime(ctx: RuntimeContext): RuntimeFace {
     refresh: async () => { await sessions.refresh() },
     open: async id => { await navigation.openSession(id) },
     archive: async id => {
-      // 与 DSH 侧栏共用原生 workspaces 归档服务；不调用 clearMain，批量结果留在工作台。
+      // 原生监听器仍会对当前会话执行 clearMain；仅补偿它清除工作台面板的副作用。
       const native = ctx.get('workspaces')
       if (typeof native?.archiveSession !== 'function') throw new Error('当前 DSH 不支持工作台归档，请使用原生菜单')
+      const releasePanel = preserveArchivePanel(ctx.get('layout'), ctx.get('uiWorkspace')?.selection, native.list, id, globalThis.document)
       try { await native.archiveSession(id, { stopActivity: false }) }
       catch (error) {
         const reason = error as { rpcError?: { code?: string }; message?: string }
         if (reason?.rpcError?.code === 'workspace/session-active') throw new Error('会话仍有运行中的任务或活动，未归档；请结束后重试')
         throw new Error(reason?.message || '原生归档失败，请刷新后确认状态')
-      }
+      } finally { releasePanel() }
     },
     rename: async (id, title) => {
       // 沿用宿主侧边栏重命名调用链，由 using 负责引用的取得与释放。

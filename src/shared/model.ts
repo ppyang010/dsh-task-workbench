@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const VERSION = '0.10.0'
+export const VERSION = '0.11.2'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'
@@ -26,10 +26,13 @@ export const removedEntrySchema = z.object({
   removedAt: z.number().finite().nonnegative(),
   beforeSessionId: sessionIdSchema.optional(),
 }).strict()
+export const DEFAULT_CHAT_BACKGROUND = '#f3f0e7'
+export const chatBackgroundSchema = z.object({ enabled: z.boolean(), color: z.string().regex(/^#[0-9a-fA-F]{6}$/, '请输入六位十六进制颜色') }).strict()
+export type ChatBackground = z.infer<typeof chatBackgroundSchema>
 export const stateSchema = z.object({
   schemaVersion: z.literal(1),
   revision: z.number().int().nonnegative(),
-  settings: z.object({ autoCollect: z.boolean(), copySessionName: z.boolean().default(false) }).strict(),
+  settings: z.object({ autoCollect: z.boolean(), copySessionName: z.boolean().default(false), chatBackground: chatBackgroundSchema.default({ enabled: false, color: DEFAULT_CHAT_BACKGROUND }) }).strict(),
   entries: z.array(entrySchema).max(20000),
   excludedSessionIds: z.array(sessionIdSchema).max(100000),
   removedEntries: z.array(removedEntrySchema).max(100000).default([]),
@@ -54,7 +57,7 @@ export type WatchEntry = z.infer<typeof entrySchema>
 export type RemovedEntry = z.infer<typeof removedEntrySchema>
 export type BoardState = z.infer<typeof stateSchema>
 export function initialState(): BoardState {
-  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, copySessionName: false }, entries: [], excludedSessionIds: [], removedEntries: [] }
+  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, copySessionName: false, chatBackground: { enabled: false, color: DEFAULT_CHAT_BACKGROUND } }, entries: [], excludedSessionIds: [], removedEntries: [] }
 }
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('add'), sessionIds: z.array(sessionIdSchema).min(1).max(500), columnId: columnSchema }).strict(),
@@ -65,6 +68,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('note'), sessionId: sessionIdSchema, note: z.string().max(2000), expectedVersion: z.number().int().min(1) }).strict(),
   z.object({ type: z.literal('settings'), autoCollect: z.boolean() }).strict(),
   z.object({ type: z.literal('copySettings'), includeName: z.boolean() }).strict(),
+  z.object({ type: z.literal('chatBackground'), value: chatBackgroundSchema }).strict(),
 ])
 export type Command = z.infer<typeof commandSchema>
 export type RuntimeStatus = 'running' | 'waiting' | 'unread' | 'idle' | 'unknown'

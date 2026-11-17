@@ -217,6 +217,11 @@ body[data-ds-dark-theme] .dtw-root,
 .dtw-root .dtw-cards[hidden] { display: none; }
 .dtw-root .dtw-auto-waiting, .dtw-root .dtw-column-hint { color: var(--dtw-muted); font-size: 11px; line-height: 1.5; margin: 0; }
 .dtw-root .dtw-column-hint { margin-bottom: 10px; }
+.dtw-root .dtw-background-form { padding: 16px; overflow: auto; }
+.dtw-root .dtw-background-enable, .dtw-root .dtw-background-color { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.dtw-root .dtw-background-color input[type="text"] { width: 120px; padding: 6px 8px; }
+.dtw-root .dtw-background-color input[type="color"] { width: 44px; height: 32px; padding: 2px; }
+.dtw-root .dtw-background-hint { color: var(--dtw-muted); margin-bottom: 12px; }
 .dtw-root .dtw-rename-form { padding: 16px; }
 .dtw-root .dtw-rename-form label { display: grid; gap: 8px; font-size: 13px; }
 .dtw-root .dtw-rename-form input { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--dtw-line); border-radius: 7px; color: var(--dtw-text); background: var(--dtw-surface); font: inherit; }

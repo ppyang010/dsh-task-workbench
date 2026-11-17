@@ -4,10 +4,11 @@ import { Icon } from './Icons.js'
 import { moveAnchor, formatUpdatedAt, getAddDisabledReason, getBoardRows, groupWorkspaces, workspaceKey, locateDropTarget, matchesRow, matchesSession, uniqueSessions, workspaceOptions, type BoardRow } from './board-helpers.js'
 import { SessionCard, StatusBadge, type NoteDraft } from './SessionCard.js'
 import { RemovedList } from './RemovedList.js'
+import { ChatBackgroundSettings } from './ChatBackgroundSettings.tsx'
 
 interface UndoEntry { entry: WatchEntry }
 interface DropPosition { columnId: ColumnId; beforeSessionId?: string; targetSessionId?: string; edge?: 'before' | 'after' }
-type Modal = { type: 'archive'; targets: Array<{ id: string; title: string }>; result?: ArchiveBatchResult } | { type: 'bulk-unfollow'; ids: string[] } | { type: 'add'; columnId: ColumnId } | { type: 'rules' } | { type: 'removed' } | { type: 'rename'; sessionId: string; title: string }
+type Modal = { type: 'background' } | { type: 'archive'; targets: Array<{ id: string; title: string }>; result?: ArchiveBatchResult } | { type: 'bulk-unfollow'; ids: string[] } | { type: 'add'; columnId: ColumnId } | { type: 'rules' } | { type: 'removed' } | { type: 'rename'; sessionId: string; title: string }
 const MAX_SELECTION = 500
 const PAGE_SIZE = 80
 
@@ -286,6 +287,7 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
             </div>
           </div>
           <div className="dtw-header-actions">
+            <button type="button" className="dtw-button" disabled={state.loading} onClick={() => { controller.clearError(); setLocalError(undefined); setModal({ type: 'background' }) }}>聊天背景</button>
             <button type="button" className="dtw-button" disabled={disabled || !!openingId || Object.keys(noteDrafts).length > 0} aria-pressed={selecting} onClick={() => { clearDrag(); setSelected(new Set()); setSelecting(value => !value) }}>{selecting ? '退出多选' : '多选'}</button>
             <button type="button" className="dtw-button" disabled={state.loading} onClick={() => { setLocalError(undefined); controller.clearError(); setModal({ type: 'removed' }) }}>已取消关注{state.board.excludedSessionIds.length > 0 ? `（${state.board.excludedSessionIds.length}）` : ''}</button>
             <div className="dtw-auto">
@@ -382,6 +384,12 @@ export function MyFocusBoard({ controller, onNewSession }: { controller: BoardCo
       if (success) { revealColumn(columnId); ids.forEach(id => revealGroup(columnId, id)); setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) }
       return success
     }} />}
+    {modal?.type === 'background' && <Dialog title="聊天背景" description="独立保存背景偏好，不依赖外部主题插件。默认关闭，仅浅色模式生效。" busy={busy} onClose={closeModal}>
+      <ChatBackgroundSettings value={state.board.settings.chatBackground} busy={busy} disabled={disabled} error={error} onClose={closeModal} onSave={async value => {
+        if (!await command({ type: 'chatBackground', value })) return false
+        setModal(null); setNotice(value.enabled ? '聊天背景已保存，返回原生对话查看；深色模式保持原样。' : '已关闭自定义背景，恢复宿主或其他已启用主题的背景。'); return true
+      }} />
+    </Dialog>}
     {modal?.type === 'archive' && <Dialog title={modal.result ? '归档结果' : '归档会话'} description="使用 DSH 原生归档，成功后自动取消关注，不删除会话。运行中的活动不会被强制停止；批量逐条执行，可能部分成功。恢复归档请使用 DSH 原生入口。" busy={busy} onClose={closeModal}>
       <div className="dtw-bulk-preview">
         {modal.result ? <><p role="status">已归档 {modal.result.items.filter(item => item.ok).length} 条，失败 {modal.result.items.filter(item => !item.ok).length} 条。</p><ul>{modal.result.items.map(item => <li key={item.sessionId}><strong>{item.title}</strong>：{item.message}</li>)}</ul>{modal.result.syncWarning && <p role="alert">{modal.result.syncWarning}</p>}</> : <ul>{modal.targets.map(target => <li key={target.id}>{target.title}</li>)}</ul>}

@@ -51,6 +51,7 @@ export class WatchStore {
       return
     }
     if (request.type === 'settings') { draft.settings.autoCollect = request.autoCollect; return }
+    if (request.type === 'chatBackground') { draft.settings.chatBackground = { ...request.value, color: request.value.color.toLowerCase() }; return }
     if (request.type === 'copySettings') { draft.settings.copySessionName = request.includeName; return }
     if (request.type === 'add') {
       const ids = [...new Set(request.sessionIds)]
