@@ -1,6 +1,6 @@
 import type { ReactNode, SVGProps } from 'react'
 
-export type IconName = 'board' | 'plus' | 'search' | 'folder' | 'arrow' | 'close' | 'info' | 'link' | 'lock' | 'refresh' | 'edit' | 'grip' | 'up' | 'down' | 'warning' | 'undo' | 'more' | 'collapse' | 'expand'
+export type IconName = 'board' | 'plus' | 'search' | 'folder' | 'arrow' | 'close' | 'info' | 'link' | 'lock' | 'refresh' | 'edit' | 'grip' | 'up' | 'down' | 'warning' | 'undo' | 'more' | 'collapse' | 'expand' | 'copy'
 
 const paths: Record<IconName, ReactNode> = {
   board: <><rect x="3.5" y="4.5" width="17" height="15" rx="2.5" /><path d="M9 5v14M15 5v14" /></>,
@@ -22,6 +22,7 @@ const paths: Record<IconName, ReactNode> = {
   more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>,
   collapse: <path d="m14 6-6 6 6 6" />,
   expand: <path d="m10 6 6 6-6 6" />,
+  copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M6 16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
 }
 
 export function Icon({ name, className = '', ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {

@@ -3,11 +3,16 @@ import { watchArchived } from './archive-watch.ts'
 import { RPC_NAMESPACE } from '../shared/model.ts'
 import { openWatchStore, WorkbenchError } from './store.ts'
 import { WorkbenchService, type HostServices } from './service.ts'
+import { openIdeasStore } from './ideas-store.ts'
+import { IdeasRemote } from './ideas-remote.ts'
+import { createIdeaCaptureTool, IDEA_CAPTURE_GUIDANCE } from './idea-capture-tool.ts'
+import { openGroupOrderStore } from './group-order-store.ts'
+import { GroupOrderRemote } from './group-order-remote.ts'
 
 export const name = 'ppyang010-task-workbench'
 export const inject = ['storageDomain', 'sessionQuery', 'workspaceRegistry']
 
-/** 使用宿主的认证 RPC 通道；不注册额外 HTTP 路由或模型工具。 */
+/** 关注数据通过宿主认证 RPC 通道访问，不注册额外 HTTP 路由。 */
 class WorkbenchRemote extends TypertRemoteService {
   constructor(ctx: any, private ready: Promise<WorkbenchService>) { super(ctx, RPC_NAMESPACE) }
   @Remote('read')
@@ -34,6 +39,14 @@ export function apply(ctx: any): void {
   } as HostServices))
   void ready.catch(() => { ctx.logger?.warn('我的关注初始化失败，未重置已有数据') })
   ctx.plugin(WorkbenchRemote, ready)
+  const openedIdeas = openIdeasStore(ctx.get('storageDomain'))
+  const ideasReady = openedIdeas.then(({ store }) => store)
+  void ideasReady.catch(() => { ctx.logger?.warn('独立点子库初始化失败，未重置已有数据') })
+  ctx.plugin(IdeasRemote, ideasReady)
+  const openedGroupOrder = openGroupOrderStore(ctx.get('storageDomain'))
+  const groupOrderReady = Promise.all([openedGroupOrder, opened]).then(([order, watch]) => ({ order: order.store, watch: watch.store, registry: ctx.get('workspaceRegistry') }))
+  void groupOrderReady.catch(() => { ctx.logger?.warn('分组顺序存储初始化失败，原有关注数据未改变') })
+  ctx.plugin(GroupOrderRemote, groupOrderReady)
   ctx.on('session/event', (session: any, event: any) => {
     // 只观察新一轮开始，不监听历史回放，也不改变会话本身。
     if (event.type !== 'turn/start') return
@@ -47,6 +60,15 @@ export function apply(ctx: any): void {
   ctx.effect(() => async () => {
     stopped = true
     await stopWatching?.()
+    try { await (await openedGroupOrder).close() } catch { /* 分组顺序初始化失败，不覆盖其他数据。 */ }
+    try { await (await openedIdeas).close() } catch { /* 独立点子库初始化失败，不覆盖原数据。 */ }
     try { await (await opened).close() } catch { /* 已记录初始化失败，不覆盖原有数据。 */ }
+  })
+  // 工具和提示服务是可选能力；缺少时不阻断已有工作台。子 fiber 卸载时先注销工具，再关闭点子域。
+  ctx.inject(['tools'], (toolCtx: any) => {
+    toolCtx.effect(() => toolCtx.get('tools').register(createIdeaCaptureTool(ideasReady)), 'task-workbench: save-idea tool')
+    toolCtx.inject(['systemPrompt'], (promptCtx: any) => {
+      promptCtx.effect(() => promptCtx.get('systemPrompt').section({ name: 'plugin:task-workbench-ideas', order: 500, text: IDEA_CAPTURE_GUIDANCE }), 'task-workbench: idea guidance')
+    })
   })
 }

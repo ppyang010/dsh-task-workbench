@@ -1,12 +1,12 @@
 import { z } from 'zod'
 
-export const VERSION = '0.11.2'
+export const VERSION = '0.19.2'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'
 export const COLUMNS = [
   { id: 'focus', title: '我的关注', description: '最近要推进，随时回来继续' },
-  { id: 'waiting', title: '等我处理', description: '需要我的决定、回复或下一步' },
+  { id: 'waiting', title: '等我处理', description: '上块看运行中，下块看等待回应与完成未读；关注原卡片不离开' },
   { id: 'later', title: '暂时搁置', description: '先留着，之后回来继续' },
 ] as const
 export type ColumnId = typeof COLUMNS[number]['id']
@@ -32,7 +32,7 @@ export type ChatBackground = z.infer<typeof chatBackgroundSchema>
 export const stateSchema = z.object({
   schemaVersion: z.literal(1),
   revision: z.number().int().nonnegative(),
-  settings: z.object({ autoCollect: z.boolean(), copySessionName: z.boolean().default(false), chatBackground: chatBackgroundSchema.default({ enabled: false, color: DEFAULT_CHAT_BACKGROUND }) }).strict(),
+  settings: z.object({ autoCollect: z.boolean(), copySessionName: z.boolean().default(false), chatBackground: chatBackgroundSchema.default({ enabled: false, color: DEFAULT_CHAT_BACKGROUND }), mirrorActivity: z.boolean().default(true) }).strict(),
   entries: z.array(entrySchema).max(20000),
   excludedSessionIds: z.array(sessionIdSchema).max(100000),
   removedEntries: z.array(removedEntrySchema).max(100000).default([]),
@@ -57,7 +57,7 @@ export type WatchEntry = z.infer<typeof entrySchema>
 export type RemovedEntry = z.infer<typeof removedEntrySchema>
 export type BoardState = z.infer<typeof stateSchema>
 export function initialState(): BoardState {
-  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, copySessionName: false, chatBackground: { enabled: false, color: DEFAULT_CHAT_BACKGROUND } }, entries: [], excludedSessionIds: [], removedEntries: [] }
+  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, copySessionName: false, chatBackground: { enabled: false, color: DEFAULT_CHAT_BACKGROUND }, mirrorActivity: true }, entries: [], excludedSessionIds: [], removedEntries: [] }
 }
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('add'), sessionIds: z.array(sessionIdSchema).min(1).max(500), columnId: columnSchema }).strict(),
@@ -69,6 +69,7 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('settings'), autoCollect: z.boolean() }).strict(),
   z.object({ type: z.literal('copySettings'), includeName: z.boolean() }).strict(),
   z.object({ type: z.literal('chatBackground'), value: chatBackgroundSchema }).strict(),
+  z.object({ type: z.literal('mirrorActivity'), enabled: z.boolean() }).strict(),
 ])
 export type Command = z.infer<typeof commandSchema>
 export type RuntimeStatus = 'running' | 'waiting' | 'unread' | 'idle' | 'unknown'

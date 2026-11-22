@@ -12,9 +12,19 @@ function fixture() {
   return { store, medium, allowed, writes: () => writes, fail: (value: boolean) => { fail = value } }
 }
 
-test('初次启用为空，自动纳入默认关闭', async () => {
+test('初次启用为空，自动纳入默认关闭，中间列同步展示默认开启', async () => {
   const f = fixture(); await f.store.autoCollect('a')
   assert.deepEqual(f.store.snapshot(), initialState()); assert.equal(f.writes(), 0)
+  assert.equal(f.store.snapshot().settings.mirrorActivity, true)
+})
+test('中间列同步展示开关独立保存，不改自动纳入', async () => {
+  const { store } = fixture()
+  await store.command({ type: 'settings', autoCollect: true })
+  await store.command({ type: 'mirrorActivity', enabled: false })
+  assert.equal(store.snapshot().settings.autoCollect, true)
+  assert.equal(store.snapshot().settings.mirrorActivity, false)
+  await store.command({ type: 'mirrorActivity', enabled: true })
+  assert.equal(store.snapshot().settings.mirrorActivity, true)
 })
 test('多选加入去重，再次添加不移动人工分类', async () => {
   const { store, allowed } = fixture()

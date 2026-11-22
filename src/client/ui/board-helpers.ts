@@ -1,8 +1,10 @@
 import { STATUS_LABELS, type ClientState, type ColumnId, type RuntimeStatus, type SessionView, type WatchEntry } from '../../shared/model.js'
+import type { GroupDragSnapshot, GroupOrderState } from '../../shared/group-order.ts'
 
 export interface BoardRow {
   entry: WatchEntry
   displayColumnId: ColumnId
+  mirrored: boolean
   session?: SessionView
   title: string
   workspaceTitle: string
@@ -12,9 +14,10 @@ export interface BoardRow {
 
 export const workspaceKey = (row: BoardRow): string => JSON.stringify(row.session?.workspaceId ?? null)
 
-/** 按真实工作区 ID 分组；组顺序稳定，组内保留人工排序和筛选隐藏记录。 */
-export function groupWorkspaces(rows: BoardRow[]): Array<{ key: string; title: string; rows: BoardRow[] }> {
-  const groups = new Map<string, { key: string; title: string; rows: BoardRow[] }>()
+export interface WorkspaceGroup { key: string; title: string; rows: BoardRow[] }
+/** 按真实工作区 ID 分组；默认按名称排序，组内保留人工排序和筛选隐藏记录。 */
+export function groupWorkspaces(rows: BoardRow[]): WorkspaceGroup[] {
+  const groups = new Map<string, WorkspaceGroup>()
   for (const row of rows) {
     const key = workspaceKey(row)
     const group = groups.get(key) ?? { key, title: row.workspaceTitle, rows: [] }
@@ -24,25 +27,71 @@ export function groupWorkspaces(rows: BoardRow[]): Array<{ key: string; title: s
   return [...groups.values()].sort((a, b) => a.title.localeCompare(b.title, 'zh-CN') || a.key.localeCompare(b.key))
 }
 
+/** 只有工作区已明确且组内一致时才允许保存顺序。 */
+export function groupWorkspaceId(group: WorkspaceGroup): string | undefined {
+  const id = group.rows[0]?.session?.workspaceId
+  if (!id || id.length > 300 || id.trim() !== id || /[\u0000-\u001f\u007f]/.test(id) || group.rows.some(row => row.session?.workspaceId !== id)) return undefined
+  return id
+}
+
+/** 保存过的分组排在前面；新分组沿用名称顺序，未知工作区保持原槽位。 */
+export function orderWorkspaceGroups(groups: WorkspaceGroup[], order: readonly string[]): WorkspaceGroup[] {
+  const rank = new Map(order.map((id, index) => [id, index]))
+  const sortable = groups.filter(group => groupWorkspaceId(group) !== undefined)
+  sortable.sort((a, b) => (rank.get(groupWorkspaceId(a)!) ?? Number.MAX_SAFE_INTEGER) - (rank.get(groupWorkspaceId(b)!) ?? Number.MAX_SAFE_INTEGER))
+  let index = 0
+  return groups.map(group => groupWorkspaceId(group) === undefined ? group : sortable[index++])
+}
+
+/** 排序只针对拖动时看到的同一分类；分组、关注版本或已保存顺序改变后需重试。 */
+export function groupOrderStillCurrent(state: ClientState, order: GroupOrderState, snapshot: GroupDragSnapshot): boolean {
+  if (!state.connected || !state.runtimeReady || state.board.revision !== snapshot.expectedBoardRevision || order.revision !== snapshot.expectedOrderRevision) return false
+  const groups = groupWorkspaces(getBoardRows(state).filter(row => snapshot.columnId === 'waiting' ? isWaitingPaneRow(row) : row.displayColumnId === snapshot.columnId && !row.mirrored))
+  const ids = orderWorkspaceGroups(groups, order.columns[snapshot.columnId]).map(groupWorkspaceId).filter((id): id is string => !!id)
+  return ids.length === snapshot.workspaceIds.length && ids.every((id, index) => id === snapshot.workspaceIds[index])
+}
+
+const ACTIVITY_STATUSES: ReadonlySet<RuntimeStatus> = new Set(['running', 'waiting', 'unread'])
+
 /** 目录尚未就绪时保留关注记录，避免把同步过程误判为会话丢失。 */
 export function getBoardRows(state: ClientState): BoardRow[] {
   const directory = new Map(uniqueSessions(state.sessions).map(session => [session.id, session]))
-  return state.board.entries.map<BoardRow>(entry => {
+  const rows: BoardRow[] = []
+  for (const entry of state.board.entries) {
     const session = directory.get(entry.sessionId)
     const unavailableReason = !state.runtimeReady
       ? '会话目录正在同步，请稍后打开'
       : session ? getUnavailableReason(session) : '暂时找不到原会话；关注记录已保留，可刷新重试'
-    return {
+    const home: BoardRow = {
       entry,
-      // 仅派生展示位置，暂时搁置和人工分类、排序始终保留。
-      displayColumnId: entry.columnId === 'focus' && state.connected && state.runtimeReady && !unavailableReason && (session?.status === 'waiting' || session?.status === 'unread') ? 'waiting' : entry.columnId,
+      displayColumnId: entry.columnId,
+      mirrored: false,
       session,
       title: session ? session.title.trim() || '未命名会话' : state.runtimeReady ? '暂时无法找到的会话' : '会话资料待同步',
       workspaceTitle: session?.workspaceTitle.trim() || '工作区待确认',
       status: state.runtimeReady ? session?.status ?? 'unknown' : 'unknown',
       unavailableReason,
     }
-  }).sort((a, b) => Number(a.displayColumnId !== a.entry.columnId) - Number(b.displayColumnId !== b.entry.columnId))
+    rows.push(home)
+    if (state.board.settings.mirrorActivity && entry.columnId === 'focus' && state.connected && state.runtimeReady && !unavailableReason && session && ACTIVITY_STATUSES.has(session.status)) {
+      rows.push({ ...home, displayColumnId: 'waiting', mirrored: true })
+    }
+  }
+  return rows
+}
+
+export function isRunningMirror(row: BoardRow): boolean {
+  return row.mirrored && row.status === 'running'
+}
+
+export function isWaitingPaneRow(row: BoardRow): boolean {
+  return row.displayColumnId === 'waiting' && !isRunningMirror(row)
+}
+
+export function activityPane(row: BoardRow): 'running' | 'waiting' | 'home' {
+  if (isRunningMirror(row)) return 'running'
+  if (row.displayColumnId === 'waiting') return 'waiting'
+  return 'home'
 }
 
 export function getUnavailableReason(session: SessionView): string {
@@ -96,7 +145,7 @@ export function afterSessionId(rows: BoardRow[], targetSessionId: string, dragge
   return index < 0 ? undefined : remaining[index + 1]?.entry.sessionId
 }
 
-/** 自动待处理卡片仍属于原分类，不能作为另一分类的持久化排序锚点。 */
+/** 同步展示卡片仍属于原分类，不能作为另一分类的持久化排序锚点。 */
 export function moveAnchor(rows: BoardRow[], targetId: string, edge: 'before' | 'after', columnId: ColumnId, draggedId: string): string | undefined {
   const index = rows.findIndex(row => row.entry.sessionId === targetId)
   if (index < 0) return undefined

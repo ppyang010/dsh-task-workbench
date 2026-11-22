@@ -1,6 +1,12 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
-import { MyFocusBoard } from '../src/client/ui/Board.tsx'
+import { WorkbenchPage } from '../src/client/ui/WorkbenchPage.tsx'
+import { IdeasController } from '../src/client/ideas-controller.ts'
+import { GroupOrderController } from '../src/client/group-order-controller.ts'
+import { GroupOrderStore } from '../src/host/group-order-store.ts'
+import { GROUP_ORDER_RPC, groupOrderStateSchema, initialGroupOrder, type GroupOrderState } from '../src/shared/group-order.ts'
+import { IdeasStore } from '../src/host/ideas-store.ts'
+import { IDEAS_RPC, initialIdeasState, type IdeasState } from '../src/shared/ideas.ts'
 import styles from '../src/client/ui/styles.css'
 import { BoardController } from '../src/client/controller.ts'
 import { WatchStore } from '../src/host/store.ts'
@@ -18,7 +24,9 @@ const seed: Array<[string, string, string, SessionView['status']]> = [
   ['demo-7', '工作区目录整理与命名约定', '插件实验室', 'idle'],
   ['demo-8', '下月学习计划与书单', '日常资料', 'idle'],
 ]
-const scenario = new URLSearchParams(location.search).get('scenario')
+const previewParams = new URLSearchParams(location.search)
+const scenario = previewParams.get('scenario')
+const groupOrderPreviewKey = previewParams.get('persistGroup') ? `dtw-preview-group-order-${previewParams.get('persistGroup')}` : ''
 if (scenario === 'stress') for (let i = 9; i <= 32; i++) seed.push([`demo-${i}`, `滚动验证会话 ${i}：菜单与弹窗仍可操作`, '合成压力场景', 'idle'])
 let board: BoardState = initialState()
 const watched = scenario === 'focus-four' ? seed.slice(0, 4) : scenario === 'stress' ? seed : seed.slice(0, 6)
@@ -29,8 +37,16 @@ if (scenario === 'removed') {
   board.entries = board.entries.filter(entry => entry.sessionId !== 'demo-6')
 }
 const store = new WatchStore({ get: () => board, set: async value => { board = value } })
-const services = { sessionQuery: { listSessions: async () => seed.map(item => ({ header: { id: item[0] }, formatStatus: 'current' })) }, workspaceRegistry: { archivedSessionIds: scenario === 'removed' ? ['demo-8'] : [] as string[] } }
+const services = { sessionQuery: { listSessions: async () => seed.map(item => ({ header: { id: item[0] }, formatStatus: 'current' })) }, workspaceRegistry: { archivedSessionIds: scenario === 'removed' ? ['demo-8'] : [] as string[], get: (workspaceId: string) => ({ sessionIds: seed.filter(item => item[2] === workspaceId).map(item => item[0]) }) } }
 const service = new WorkbenchService(store, services)
+let ideaData: IdeasState = initialIdeasState()
+const ideaStore = new IdeasStore({ get: () => ideaData, set: async value => { ideaData = value } })
+let groupOrderData: GroupOrderState = initialGroupOrder()
+// 只供合成页面验证刷新；不访问或修改真实工作台存储。
+if (groupOrderPreviewKey) {
+  try { const parsed = groupOrderStateSchema.safeParse(JSON.parse(sessionStorage.getItem(groupOrderPreviewKey) ?? 'null')); if (parsed.success) groupOrderData = parsed.data } catch { /* 忽略失效的预览数据。 */ }
+}
+const groupOrderStore = new GroupOrderStore({ get: () => groupOrderData, set: async value => { groupOrderData = value; if (groupOrderPreviewKey) sessionStorage.setItem(groupOrderPreviewKey, JSON.stringify(value)) } })
 const runtime: RuntimeSnapshot = { connected: true, ready: true, sessions: seed.map((item, i) => ({ id: item[0], title: item[1], workspaceId: item[2], workspaceTitle: item[2], updatedAt: Date.now() - i * 120000, status: item[3], archived: scenario === 'removed' && item[0] === 'demo-8', missing: false, subagent: false, openable: true, ...(item[3] === 'waiting' ? { waitingLabel: '等待回答' } : {}) })) }
 const observers = new Set<() => void>()
 const publish = () => { for (const listener of observers) listener() }
@@ -65,6 +81,24 @@ const controller = new BoardController({ call: async (_channel, method, payload:
   },
   open: async id => { const result = document.querySelector('#demo-result')!; result.textContent = `已验证导航目标：${id}（仅合成会话，实际插件打开原会话页）`; result.setAttribute('data-opened', id) },
 })
+const ideasController = new IdeasController({ call: async (_channel, method, payload: any) => {
+  await new Promise(resolve => setTimeout(resolve, 80))
+  if (!method.startsWith(`${IDEAS_RPC}/`)) throw new Error('错误的点子服务')
+  if (method.endsWith('/mutate') && failNext) { failNext = false; return { ok: true, value: { ok: false, error: { message: '模拟保存失败：输入已保留，请重试' } } } }
+  try {
+    const value = method.endsWith('/mutate') ? await ideaStore.command(payload.args.request) : ideaStore.snapshot()
+    return { ok: true, value: { ok: true, value } }
+  } catch (error) { return { ok: true, value: { ok: false, error: { message: error instanceof Error ? error.message : '示例操作失败' } } } }
+} })
+const groupOrderController = new GroupOrderController({ call: async (_channel, method, payload: any) => {
+  await new Promise(resolve => setTimeout(resolve, 80))
+  if (!method.startsWith(`${GROUP_ORDER_RPC}/`)) throw new Error('错误的分组排序服务')
+  if (method.endsWith('/mutate') && failNext) { failNext = false; return { ok: true, value: { ok: false, error: { message: '模拟排序保存失败，原顺序未改变' } } } }
+  try {
+    const value = method.endsWith('/mutate') ? await groupOrderStore.reorder(payload.args.request, { board: () => store.snapshot(), members: id => services.workspaceRegistry.get(id).sessionIds }) : groupOrderStore.snapshot()
+    return { ok: true, value: { ok: true, value } }
+  } catch (error) { return { ok: true, value: { ok: false, error: { message: error instanceof Error ? error.message : '示例操作失败' } } } }
+} })
 const sheet = document.createElement('style'); sheet.textContent = styles; document.head.append(sheet)
 controller.start(); controller.activate()
 const sandbox = document.createElement('div')
@@ -77,7 +111,13 @@ document.querySelector('#demo-resolve')!.addEventListener('click', () => { for (
 document.querySelector('#demo-failure')!.addEventListener('click', () => { failNext = true; document.querySelector('#demo-result')!.textContent = '下一次修改将模拟保存失败' })
 document.querySelector('#demo-dark')!.addEventListener('click', () => { const dark = document.documentElement.dataset.theme !== 'dark'; document.documentElement.dataset.theme = dark ? 'dark' : 'light'; document.documentElement.style.colorScheme = dark ? 'dark' : 'light'; document.documentElement.style.setProperty('--dsw-bg', dark ? '#171c19' : '#f6f7f3'); document.documentElement.style.setProperty('--dsw-text-primary', dark ? '#e2e8de' : '#283226') })
 document.querySelector('#demo-turn')!.addEventListener('click', async () => { const id = 'demo-7'; runtime.sessions.find(s => s.id === id)!.status = 'running'; publish(); await service.onSessionEvent({ id, header: { id } }, { type: 'turn/start' }); await controller.refresh(); document.querySelector('#demo-result')!.textContent = '已模拟 demo-7 开始新一轮' })
-createRoot(document.querySelector('#app')!).render(<MyFocusBoard controller={controller} onNewSession={async workspaceId => {
+createRoot(document.querySelector('#app')!).render(<WorkbenchPage board={controller} ideas={ideasController} groupOrder={groupOrderController} loadSentinels={async () => ({
+  watches: [
+    { sessionId: 'demo-1', id: 'watch-1', kind: 'file', target: 'report.md', pattern: '已完成', note: '报告生成提醒', live: true, lastState: '文件已更新', fireCount: 1 },
+    { sessionId: 'demo-2', id: 'watch-1', kind: 'session', target: 'demo-3', note: '等待会话结束', live: false, fireCount: 0 },
+  ],
+  recentFires: [{ sessionId: 'demo-1', id: 'watch-1', at: new Date().toISOString(), summary: '报告已生成' }],
+})} onNewSession={async workspaceId => {
   await new Promise(resolve => setTimeout(resolve, 200))
   if (failNext) { failNext = false; throw new Error('模拟打开新会话失败') }
   const result = document.querySelector('#demo-result')!

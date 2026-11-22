@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { COLUMNS, STATUS_LABELS, type ColumnId, type RuntimeStatus } from '../../shared/model.js'
 import { Icon } from './Icons.js'
 import { formatUpdatedAt, type BoardRow } from './board-helpers.js'
+import { sessionCopyText, writeSessionClipboard } from '../session-copy.js'
 
 export function StatusBadge({ status, waitingLabel }: { status: RuntimeStatus; waitingLabel?: string }) {
   return <span className={`dtw-status dtw-status-${status}`} title={waitingLabel || STATUS_LABELS[status]}><i aria-hidden="true" />{waitingLabel || STATUS_LABELS[status]}</span>
@@ -29,11 +30,11 @@ export interface SessionCardProps {
   onNote: (note: string, version: number) => Promise<boolean>
   onDragStart: (event: DragEvent<HTMLElement>) => void
   onDragEnd: () => void
+  onNotice: (message: string) => void
 }
 
-export function SessionCard({ selecting = false, selected = false, onSelect, draft, setDraft, row, columnRows, busy, opening, dragging, dropBefore, dropAfter, onOpen, onRename, onArchive, onUnfollow, onMove, onNote, onDragStart, onDragEnd }: SessionCardProps) {
-  const autoWaiting = row.displayColumnId !== row.entry.columnId
-  const sortableRows = columnRows.filter(item => item.entry.columnId === row.displayColumnId)
+export function SessionCard({ selecting = false, selected = false, onSelect, draft, setDraft, row, columnRows, busy, opening, dragging, dropBefore, dropAfter, onOpen, onRename, onArchive, onUnfollow, onMove, onNote, onDragStart, onDragEnd, onNotice }: SessionCardProps) {
+  const sortableRows = columnRows.filter(item => !item.mirrored && item.entry.columnId === row.displayColumnId)
   const [expanded, setExpanded] = useState(false)
   const [overflowing, setOverflowing] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -82,12 +83,22 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
   }
   const finishEditing = () => { setDraft(null); title.current?.focus() }
   const menuAction = (action: () => void) => { closeMenu(true); action() }
+  const copySession = (includeName: boolean) => {
+    const text = includeName ? sessionCopyText(row.entry.sessionId, row.title) : row.entry.sessionId
+    void (async () => {
+      let ok = false
+      try { ok = await writeSessionClipboard(text) } catch { /* 写入异常按失败提示。 */ }
+      onNotice(ok ? (includeName ? (text.includes('\n') ? '已复制会话名称和 Session ID' : '已复制 Session ID（会话名称为空）') : '已复制 Session ID') : '复制失败，请重试')
+    })()
+  }
 
   return <article
     className={`dtw-card ${dragging ? 'dtw-card-dragging' : ''} ${dropBefore ? 'dtw-card-drop-before' : ''} ${dropAfter ? 'dtw-card-drop-after' : ''}`}
     data-dtw-selected={selecting && selected ? true : undefined}
     data-dtw-session={row.entry.sessionId}
-    draggable={!disabled && !menuOpen}
+    data-dtw-status={row.status}
+    data-dtw-mirrored={row.mirrored ? true : undefined}
+    draggable={!disabled && !menuOpen && !row.mirrored}
     onDragStart={onDragStart}
     onDragEnd={onDragEnd}
     aria-label={row.title}
@@ -98,8 +109,7 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
       <h3><button ref={title} type="button" className="dtw-card-title dtw-open-button" disabled={disabled || opening || !!row.unavailableReason} onClick={onOpen} aria-label={`打开原对话：${row.title}`} title={row.unavailableReason || (editing ? '先保存或取消备注' : row.title)}>{opening ? '正在打开…' : row.title}</button></h3>
       <StatusBadge status={row.status} waitingLabel={row.session?.waitingLabel} />
     </div>
-    {autoWaiting && <p className="dtw-auto-waiting" title="原分类为我的关注，处理后自动返回；可在分类下拉中选择等我处理以长期保留">自动待处理 · 原分类：我的关注</p>}
-    {draft ? <form className="dtw-note-editor" onSubmit={event => {
+    {!row.mirrored && draft ? <form className="dtw-note-editor" onSubmit={event => {
       event.preventDefault()
       if (busy || changedElsewhere) return
       void (async () => { if (await onNote(draft.text, draft.expectedVersion)) finishEditing() })()
@@ -109,7 +119,7 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
       <div className="dtw-note-count">{draft.text.length} / 2000</div>
       {changedElsewhere && <div className="dtw-inline-warning" role="status"><p>这条关注记录已在别处更新。草稿已保留，确认最新备注后再保存。</p><details><summary>查看最新备注</summary><p>{row.entry.note || '暂无备注'}</p></details><button className="dtw-text-button" type="button" disabled={busy} onClick={() => setDraft({ ...draft, expectedVersion: row.entry.version })}>保留草稿，使用最新版本</button></div>}
       <div className="dtw-note-actions"><button type="button" className="dtw-button dtw-button-small" disabled={busy} onClick={finishEditing}>取消</button><button type="submit" className="dtw-button dtw-button-primary dtw-button-small" disabled={busy || changedElsewhere}>{busy ? '保存中…' : '保存备注'}</button></div>
-    </form> : row.entry.note ? <div className={`dtw-note-preview ${expanded ? 'is-expanded' : ''}`}>
+    </form> : !row.mirrored && row.entry.note ? <div className={`dtw-note-preview ${expanded ? 'is-expanded' : ''}`}>
       <p className="dtw-note-text" ref={noteText} id={noteId}>{row.entry.note}</p>
       {(overflowing || expanded) && <button type="button" className="dtw-icon-button dtw-note-expand" aria-expanded={expanded} aria-controls={noteId} aria-label={`${expanded ? '收起' : '展开'}备注：${row.title}`} title={expanded ? '收起备注' : '展开完整备注'} onClick={() => setExpanded(value => !value)}><Icon name={expanded ? 'up' : 'down'} /></button>}
     </div> : null}
@@ -130,12 +140,14 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
           setAbove(rect.bottom + height + 4 > bottom && rect.top - top > bottom - rect.bottom)
         }
       }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeMenu() }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(true) } }}>
-        <summary ref={menuTrigger} className="dtw-icon-button" aria-label={`更多操作：${row.title}`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault() }} onKeyDown={event => { if (disabled && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} title="移动分类、修改会话名、备注、排序与取消关注"><Icon name="more" /></summary>
+        <summary ref={menuTrigger} className="dtw-icon-button" aria-label={`更多操作：${row.title}`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault() }} onKeyDown={event => { if (disabled && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} title="复制、移动分类、修改会话名、备注、排序与取消关注"><Icon name="more" /></summary>
         <div className="dtw-card-menu-panel">
-          <label className="dtw-menu-move">移动到<select className="dtw-move-select" title={autoWaiting ? '原分类；选择等我处理可长期保留，选择暂时搁置可暂停提醒' : '调整人工分类'} value={row.entry.columnId} disabled={disabled} onChange={event => { const column = event.target.value as ColumnId; menuAction(() => onMove(column)) }} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select></label>
+          <label className="dtw-menu-move">移动到<select className="dtw-move-select" title={row.mirrored ? '同步展示，请在「我的关注」原卡片调整分类' : '调整人工分类'} value={row.entry.columnId} disabled={disabled || row.mirrored} onChange={event => { const column = event.target.value as ColumnId; menuAction(() => onMove(column)) }} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select></label>
           <span className="dtw-menu-source">来源：{row.entry.source === 'auto' ? '自动纳入' : '手动关注'}</span>
+          <button type="button" disabled={disabled} onClick={() => menuAction(() => { void copySession(false) })} aria-label={`复制 Session ID：${row.title}`}><Icon name="copy" />复制 Session ID</button>
+          <button type="button" disabled={disabled} onClick={() => menuAction(() => { void copySession(true) })} aria-label={`复制名称和 ID：${row.title}`}><Icon name="copy" />复制名称和 ID</button>
           <button type="button" disabled={disabled || opening || !!row.unavailableReason} onClick={() => menuAction(onRename)} aria-label={`修改会话名：${row.title}`}><Icon name="edit" />修改会话名</button>
-          <button type="button" disabled={disabled} onClick={editNote} aria-label={`${row.entry.note ? '编辑' : '添加'}备注：${row.title}`}><Icon name="edit" />{row.entry.note ? '编辑备注' : '添加备注'}</button>
+          {!row.mirrored && <button type="button" disabled={disabled} onClick={editNote} aria-label={`${row.entry.note ? '编辑' : '添加'}备注：${row.title}`}><Icon name="edit" />{row.entry.note ? '编辑备注' : '添加备注'}</button>}
           <button type="button" disabled={disabled || index <= 0} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index - 1]?.entry.sessionId))} aria-label={`上移：${row.title}`}><Icon name="up" />上移</button>
           <button type="button" disabled={disabled || index < 0 || index >= sortableRows.length - 1} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index + 2]?.entry.sessionId))} aria-label={`下移：${row.title}`}><Icon name="down" />下移</button>
           <button type="button" disabled={disabled || opening || !!row.unavailableReason || !onArchive} onClick={() => menuAction(() => onArchive?.())} aria-label={`归档会话：${row.title}`} title="调用 DSH 原生归档；运行中的活动不会被强制停止"><Icon name="folder" />归档会话</button>

@@ -53,6 +53,7 @@ export class WatchStore {
     if (request.type === 'settings') { draft.settings.autoCollect = request.autoCollect; return }
     if (request.type === 'chatBackground') { draft.settings.chatBackground = { ...request.value, color: request.value.color.toLowerCase() }; return }
     if (request.type === 'copySettings') { draft.settings.copySessionName = request.includeName; return }
+    if (request.type === 'mirrorActivity') { draft.settings.mirrorActivity = request.enabled; return }
     if (request.type === 'add') {
       const ids = [...new Set(request.sessionIds)]
       if (!allowedIds || ids.some(id => !allowedIds.has(id))) throw new WorkbenchError('session_unavailable', '部分会话已归档、已删除、属于子代理或暂不可用，请刷新后重新选择')

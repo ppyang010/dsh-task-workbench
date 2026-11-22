@@ -2,7 +2,9 @@ import * as React from 'react'
 import { PANEL_ID } from '../shared/model.ts'
 import { BoardController } from './controller.ts'
 import { createRuntime, openNewSessionPage } from './runtime.ts'
-import { MyFocusBoard } from './ui/Board.tsx'
+import { IdeasController } from './ideas-controller.ts'
+import { GroupOrderController } from './group-order-controller.ts'
+import { WorkbenchPage } from './ui/WorkbenchPage.tsx'
 import { registerHeaderEntry } from './header-entry.tsx'
 import { registerSessionCopy } from './session-copy.tsx'
 import { installChatBackground } from './chat-background.ts'
@@ -13,16 +15,18 @@ export const inject = ['slots', 'connection', 'sessions', 'workspaces', 'uiSessi
 export function apply(ctx: any): void {
   try {
     const controller = new BoardController(ctx.get('connection').rpc, createRuntime(ctx))
+    const ideas = new IdeasController(ctx.get('connection').rpc)
+    const groupOrder = new GroupOrderController(ctx.get('connection').rpc)
     const sheet = document.createElement('style')
     sheet.dataset.dshTaskWorkbench = ''
     sheet.textContent = styles
     document.head.append(sheet)
-    const disposers: Array<() => void> = [() => sheet.remove(), controller.start()]
+    const disposers: Array<() => void> = [() => sheet.remove(), controller.start(), () => ideas.dispose(), () => groupOrder.dispose()]
     disposers.push(installChatBackground(controller))
     const slots = ctx.get('slots')
     const Page = () => {
       React.useEffect(() => controller.activate(), [])
-      return <MyFocusBoard controller={controller} onNewSession={workspaceId => openNewSessionPage(ctx, workspaceId)} />
+      return <WorkbenchPage board={controller} ideas={ideas} groupOrder={groupOrder} onNewSession={workspaceId => openNewSessionPage(ctx, workspaceId)} onOpenMonitor={() => ctx.get('layout').selectPanel('sentinel')} />
     }
     const Icon = ({ size = 17 }: { size?: number }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16m6-16v16"/></svg>
     try {
