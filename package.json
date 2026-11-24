@@ -1,6 +1,6 @@
 {
   "name": "@ppyang010/dsh-task-workbench",
-  "version": "0.20.0",
+  "version": "0.21.1",
   "description": "DSH 我的任务工作台：跨工作区关注原生会话，独立记录点子并关联已有会话。",
   "type": "module",
   "license": "MIT",

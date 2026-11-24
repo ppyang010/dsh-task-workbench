@@ -1,6 +1,7 @@
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { watchArchived } from './archive-watch.ts'
 import { RPC_NAMESPACE } from '../shared/model.ts'
+import { installDefaultModelLock } from './default-model-lock.ts'
 import { openWatchStore, WorkbenchError } from './store.ts'
 import { WorkbenchService, type HostServices } from './service.ts'
 import { openIdeasStore } from './ideas-store.ts'
@@ -35,8 +36,29 @@ class WorkbenchRemote extends TypertRemoteService {
 }
 export function apply(ctx: any): void {
   const opened = openWatchStore(ctx.get('storageDomain'))
+  let validateDefaultModel: HostServices['validateDefaultModel']
+  ctx.inject(['agentDefaultModel', 'llm'], (modelCtx: any) => {
+    modelCtx.effect(async () => {
+      const { store } = await opened
+      try {
+        const dispose = installDefaultModelLock(modelCtx.get('agentDefaultModel'), () => store.lockedModelSelection)
+        validateDefaultModel = async selection => {
+          const llm = modelCtx.get('llm')
+          try { await llm.resolveCallConfig(selection) }
+          catch { throw new WorkbenchError('model_unavailable', '所选模型或推理强度当前不可用，请检查模型提供方配置') }
+        }
+        return () => { validateDefaultModel = undefined; dispose() }
+      } catch {
+        ctx.logger?.warn('宿主默认模型接口不可用，工作台未接入默认模型锁定')
+      }
+    }, 'task-workbench: default model lock')
+  })
   const ready = opened.then(({ store }) => new WorkbenchService(store, {
     sessionQuery: ctx.get('sessionQuery'), workspaceRegistry: ctx.get('workspaceRegistry'),
+    validateDefaultModel: async selection => {
+      if (!validateDefaultModel) throw new WorkbenchError('unavailable', '当前 DSH 未提供默认模型锁定所需的服务')
+      await validateDefaultModel(selection)
+    },
   } as HostServices))
   void ready.catch(() => { ctx.logger?.warn('我的关注初始化失败，未重置已有数据') })
   ctx.plugin(WorkbenchRemote, ready)

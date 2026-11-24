@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const VERSION = '0.20.0'
+export const VERSION = '0.21.1'
 export const PANEL_ID = 'ppyang010-task-workbench'
 export const RPC_NAMESPACE = 'ppyangTaskWorkbench'
 export const DOMAIN_NAME = 'ppyang010_task_workbench'
@@ -26,13 +26,27 @@ export const removedEntrySchema = z.object({
   removedAt: z.number().finite().nonnegative(),
   beforeSessionId: sessionIdSchema.optional(),
 }).strict()
+export const LOCKED_DEFAULT_MODEL = { provider: 'magpie-responses', model: 'codex/gpt-6.2-sol', reasoningEffort: 'medium' } as const
+const modelIdSchema = z.string().min(1).max(256).refine(value => value.trim() === value)
+export const modelSelectionSchema = z.object({ provider: modelIdSchema, model: modelIdSchema, reasoningEffort: modelIdSchema.optional() }).strict()
+export type ModelSelection = z.infer<typeof modelSelectionSchema>
+export const modelCatalogSchema = z.object({ groups: z.array(z.object({
+  id: modelIdSchema,
+  name: z.string(),
+  models: z.array(z.object({
+    id: modelIdSchema,
+    name: z.string(),
+    reasoning: z.object({ defaultEffort: modelIdSchema.optional(), efforts: z.array(z.object({ id: modelIdSchema, name: z.string() })) }).optional(),
+  })),
+})), failures: z.array(z.unknown()).default([]) })
+export type ModelCatalog = z.infer<typeof modelCatalogSchema>
 export const DEFAULT_CHAT_BACKGROUND = '#f3f0e7'
 export const chatBackgroundSchema = z.object({ enabled: z.boolean(), color: z.string().regex(/^#[0-9a-fA-F]{6}$/, '请输入六位十六进制颜色') }).strict()
 export type ChatBackground = z.infer<typeof chatBackgroundSchema>
 export const stateSchema = z.object({
   schemaVersion: z.literal(1),
   revision: z.number().int().nonnegative(),
-  settings: z.object({ autoCollect: z.boolean(), autoCollectSidechat: z.boolean().default(false), copySessionName: z.boolean().default(false), chatBackground: chatBackgroundSchema.default({ enabled: false, color: DEFAULT_CHAT_BACKGROUND }), mirrorActivity: z.boolean().default(true) }).strict(),
+  settings: z.object({ autoCollect: z.boolean(), autoCollectSidechat: z.boolean().default(false), lockDefaultModel: z.boolean().default(false), defaultModelSelection: modelSelectionSchema.default(LOCKED_DEFAULT_MODEL), copySessionName: z.boolean().default(false), chatBackground: chatBackgroundSchema.default({ enabled: false, color: DEFAULT_CHAT_BACKGROUND }), mirrorActivity: z.boolean().default(true) }).strict(),
   entries: z.array(entrySchema).max(20000),
   excludedSessionIds: z.array(sessionIdSchema).max(100000),
   removedEntries: z.array(removedEntrySchema).max(100000).default([]),
@@ -57,7 +71,7 @@ export type WatchEntry = z.infer<typeof entrySchema>
 export type RemovedEntry = z.infer<typeof removedEntrySchema>
 export type BoardState = z.infer<typeof stateSchema>
 export function initialState(): BoardState {
-  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, autoCollectSidechat: false, copySessionName: false, chatBackground: { enabled: false, color: DEFAULT_CHAT_BACKGROUND }, mirrorActivity: true }, entries: [], excludedSessionIds: [], removedEntries: [] }
+  return { schemaVersion: 1, revision: 0, settings: { autoCollect: false, autoCollectSidechat: false, lockDefaultModel: false, defaultModelSelection: { ...LOCKED_DEFAULT_MODEL }, copySessionName: false, chatBackground: { enabled: false, color: DEFAULT_CHAT_BACKGROUND }, mirrorActivity: true }, entries: [], excludedSessionIds: [], removedEntries: [] }
 }
 export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('add'), sessionIds: z.array(sessionIdSchema).min(1).max(500), columnId: columnSchema }).strict(),
@@ -67,6 +81,8 @@ export const commandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('move'), sessionId: sessionIdSchema, columnId: columnSchema, beforeSessionId: sessionIdSchema.optional() }).strict(),
   z.object({ type: z.literal('note'), sessionId: sessionIdSchema, note: z.string().max(2000), expectedVersion: z.number().int().min(1) }).strict(),
   z.object({ type: z.literal('settings'), autoCollect: z.boolean() }).strict(),
+  z.object({ type: z.literal('defaultModelLock'), enabled: z.boolean() }).strict(),
+  z.object({ type: z.literal('defaultModelSelection'), selection: modelSelectionSchema }).strict(),
   z.object({ type: z.literal('sidechatSettings'), enabled: z.boolean() }).strict(),
   z.object({ type: z.literal('copySettings'), includeName: z.boolean() }).strict(),
   z.object({ type: z.literal('chatBackground'), value: chatBackgroundSchema }).strict(),
@@ -102,6 +118,7 @@ export interface ClientState {
 export interface ArchiveItemResult { sessionId: string; title: string; ok: boolean; message: string }
 export interface ArchiveBatchResult { items: ArchiveItemResult[]; syncWarning?: string }
 export interface BoardControllerFace {
+  loadModelCatalog?(signal: AbortSignal): Promise<ModelCatalog>
   archiveSessions?(sessionIds: string[]): Promise<ArchiveBatchResult>
   subscribe(listener: () => void): () => void
   getSnapshot(): ClientState

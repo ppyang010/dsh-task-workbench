@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode } from 'react'
+import { DefaultModelSettings } from './DefaultModelSettings.tsx'
 import { COLUMNS, STATUS_LABELS, type ArchiveBatchResult, type BoardControllerFace, type ColumnId, type Command, type SessionView, type WatchEntry } from '../../shared/model.js'
 import { Icon } from './Icons.js'
 import { activityPane, isRunningMirror, isWaitingPaneRow, moveAnchor, formatUpdatedAt, getAddDisabledReason, getBoardRows, groupWorkspaces, groupWorkspaceId, orderWorkspaceGroups, groupOrderStillCurrent, workspaceKey, locateDropTarget, matchesRow, matchesSession, uniqueSessions, workspaceOptions, type BoardRow } from './board-helpers.js'
@@ -509,8 +510,10 @@ export function MyFocusBoard({ controller, groupOrder, onNewSession }: { control
       if (success) { revealColumn(columnId); ids.forEach(id => revealGroup(columnId, id)); setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) }
       return success
     }} />}
-    {modal?.type === 'settings' && <Dialog title="工作台设置" description="自动纳入、中间列同步展示、聊天背景和使用帮助集中在此；不改变现有关注分类。" busy={busy} onClose={closeModal} className="dtw-dialog-settings">
+    {modal?.type === 'settings' && <Dialog title="工作台设置" description="设置新会话默认模型、自动纳入、看板显示和聊天背景。" busy={busy} onClose={closeModal} className="dtw-dialog-settings">
       <div className="dtw-settings">
+        <DefaultModelSettings selection={state.board.settings.defaultModelSelection} enabled={state.board.settings.lockDefaultModel}
+          disabled={disabled} connected={state.connected} loadCatalog={controller.loadModelCatalog} command={command} />
         <section>
           <strong>自动纳入</strong>
           <p>开启后，普通会话开始新一轮时加入「我的关注」，包括已有会话续聊。只打开查看不会纳入，也不会回扫历史；关闭时保留已有关注。</p>

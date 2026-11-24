@@ -1,4 +1,4 @@
-import { DOMAIN_NAME, commandSchema, initialState, stateSchema, type BoardState, type Command } from '../shared/model.ts'
+import { DOMAIN_NAME, commandSchema, initialState, stateSchema, type BoardState, type Command, type ModelSelection } from '../shared/model.ts'
 
 export class WorkbenchError extends Error {
   constructor(public code: string, message: string) { super(message) }
@@ -20,11 +20,23 @@ export class WatchStore {
     this.state = stateSchema.parse(medium.get())
   }
   snapshot(): BoardState { return structuredClone(this.state) }
-  private enqueue(job: (draft: BoardState) => void): Promise<BoardState> {
+  get lockedModelSelection(): ModelSelection | undefined {
+    const settings = this.state.settings
+    return settings.lockDefaultModel ? { ...settings.defaultModelSelection } : undefined
+  }
+  configureDefaultModel(request: Extract<Command, { type: 'defaultModelLock' | 'defaultModelSelection' }>, validate: (selection: ModelSelection) => Promise<void>): Promise<BoardState> {
+    return this.enqueue(async draft => {
+      if (request.type === 'defaultModelSelection' || request.enabled) {
+        await validate(request.type === 'defaultModelSelection' ? request.selection : draft.settings.defaultModelSelection)
+      }
+      this.apply(draft, request)
+    })
+  }
+  private enqueue(job: (draft: BoardState) => void | Promise<void>): Promise<BoardState> {
     if (this.closing) return Promise.reject(new WorkbenchError('closed', '关注存储已关闭'))
     const run = this.tail.then(async () => {
       const draft = structuredClone(this.state)
-      job(draft)
+      await job(draft)
       if (JSON.stringify(draft) === JSON.stringify(this.state)) return this.snapshot()
       draft.revision = this.state.revision + 1
       const next = stateSchema.parse(draft)
@@ -51,6 +63,8 @@ export class WatchStore {
       return
     }
     if (request.type === 'settings') { draft.settings.autoCollect = request.autoCollect; return }
+    if (request.type === 'defaultModelLock') { draft.settings.lockDefaultModel = request.enabled; return }
+    if (request.type === 'defaultModelSelection') { draft.settings.defaultModelSelection = request.selection; return }
     if (request.type === 'sidechatSettings') { draft.settings.autoCollectSidechat = request.enabled; return }
     if (request.type === 'chatBackground') { draft.settings.chatBackground = { ...request.value, color: request.value.color.toLowerCase() }; return }
     if (request.type === 'copySettings') { draft.settings.copySessionName = request.includeName; return }

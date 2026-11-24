@@ -1,4 +1,4 @@
-import { commandSchema, sessionIdSchema, type BoardState } from '../shared/model.ts'
+import { commandSchema, sessionIdSchema, type BoardState, type ModelSelection } from '../shared/model.ts'
 import { WatchStore, WorkbenchError } from './store.ts'
 import { isSidechat } from '../shared/sidechat.ts'
 
@@ -9,6 +9,7 @@ export interface HostServices {
     readTitle?(id: string): Promise<{ title: string; source: { kind: string } } | undefined>
   }
   workspaceRegistry: { archivedSessionIds: readonly string[] }
+  validateDefaultModel?(selection: ModelSelection): Promise<void>
 }
 export function isChildSession(header: SessionHeader): boolean {
   // 普通 fork 也有 parentSession，必须看 origin/delegationDepth，不能仅凭父会话排除。
@@ -25,6 +26,12 @@ export class WorkbenchService {
     if (!result.success) throw new WorkbenchError('invalid_input', '操作参数无效，请刷新后重试')
     await this.reconcileArchived()
     const request = result.data
+    if (request.type === 'defaultModelLock' || request.type === 'defaultModelSelection') {
+      return this.store.configureDefaultModel(request, async selection => {
+        if (!this.services.validateDefaultModel) throw new WorkbenchError('unavailable', '当前 DSH 未提供默认模型锁定所需的服务')
+        await this.services.validateDefaultModel(selection)
+      })
+    }
     if (request.type !== 'add' && request.type !== 'restore') return this.store.command(request)
     // 已关注的重复恢复直接交由串行存储判定，不要求目录此刻仍可用。
     if (request.type === 'restore' && this.store.snapshot().entries.some(entry => entry.sessionId === request.sessionId)) return this.store.command(request)

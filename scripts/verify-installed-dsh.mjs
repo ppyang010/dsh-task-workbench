@@ -23,6 +23,7 @@ const { default: SystemPrompt } = await load('dsh-system-prompt')
 const { default: Tools } = await load('dsh-tools')
 const NativeTools = await load('dsh-tool-executor-native')
 const { default: WorkspaceRegistry } = await load('dsh-workspace')
+const { default: AgentDefaultModel } = await load('dsh-agent-default-model')
 await build({ entryPoints: [join(root, 'src/host/index.ts')], outfile: join(artifacts, 'host.mjs'), bundle: true, format: 'esm', platform: 'node', target: 'node22', packages: 'external', minify: false, plugins: [{ name: '安装版本接口绑定', setup(builder) {
   builder.onResolve({ filter: /^@deepseek-ai\// }, args => ({ path: official(args.path.slice('@deepseek-ai/'.length)), external: true }))
 } }] })
@@ -34,6 +35,18 @@ async function open(withTools = true) {
   await ctx.plugin(Storage)
   await ctx.plugin(storageJson, { root: join(artifacts, 'data') })
   await ctx.plugin(storageDomain, { backend: 'json' })
+  await ctx.plugin(AgentDefaultModel, { provider: 'fixture', model: 'original' })
+  const defaultWrites = []
+  const defaults = ctx.get('agentDefaultModel')
+  const saveSelection = defaults.saveSelection
+  Object.defineProperty(defaults, 'saveSelection', { configurable: true, value: async function (selection) {
+    defaultWrites.push(selection)
+    await saveSelection.call(this, selection)
+  } })
+  ctx.provide('llm', { resolveCallConfig: async selection => {
+    if (selection.model === 'unavailable') throw new Error('合成模型不可用')
+    return selection
+  } })
   ctx.provide('sessionQuery', { listSessions: async () => [{ header: { id: 'fixture-main' }, formatStatus: 'current' }, { header: { id: 'fixture-fork', parentSession: 'fixture-main', isSeeded: true }, formatStatus: 'current' }] })
   ctx.provide('workspaceRegistry', { archivedSessionIds: [], get: id => id === 'fixture-workspace' ? { sessionIds: ['fixture-main'] } : id === 'fixture-other' ? { sessionIds: ['fixture-fork'] } : undefined })
   ctx.provide('remoteAccess', { decide: () => ({ kind: 'deny', reason: '仅 owner 测试' }) })
@@ -69,10 +82,35 @@ async function open(withTools = true) {
   assert.equal(invalidEnvelope.ok, false, '真实 RPC 必须拒绝缺少 args 的 payload')
   const initial = await call('read')
   assert.equal(initial.ok, true, JSON.stringify(initial))
-  return { ctx, call, callIdea, callGroupOrder, hostFiber }
+  return { ctx, call, callIdea, callGroupOrder, hostFiber, defaultWrites }
 }
 let current = await open()
 try {
+  const defaults = current.ctx.get('agentDefaultModel')
+  await current.call('mutate', { request: { type: 'defaultModelLock', enabled: false } })
+  const baseline = { provider: 'magpie-responses', model: 'codex/gpt-6.2-sol', reasoningEffort: 'medium' }
+  assert.equal((await current.call('mutate', { request: { type: 'defaultModelSelection', selection: baseline } })).ok, true)
+  assert.equal(defaults.currentSelection().model, 'original')
+  let lockResult = await current.call('mutate', { request: { type: 'defaultModelLock', enabled: true } })
+  assert.equal(lockResult.ok, true, JSON.stringify(lockResult))
+  assert.deepEqual(defaults.currentSelection(), { provider: 'magpie-responses', model: 'codex/gpt-6.2-sol', reasoningEffort: 'medium' })
+  await defaults.saveSelection({ provider: 'fixture', model: 'other' })
+  assert.deepEqual(current.defaultWrites, [])
+  assert.equal(defaults.currentSelection().model, 'codex/gpt-6.2-sol')
+  lockResult = await current.call('mutate', { request: { type: 'defaultModelLock', enabled: false } })
+  assert.equal(lockResult.ok, true, JSON.stringify(lockResult))
+  assert.equal(defaults.currentSelection().model, 'original')
+  await defaults.saveSelection({ provider: 'fixture', model: 'other' })
+  assert.deepEqual(current.defaultWrites, [{ provider: 'fixture', model: 'other' }])
+  const chosenModel = { provider: 'fixture', model: 'custom', reasoningEffort: 'high' }
+  lockResult = await current.call('mutate', { request: { type: 'defaultModelSelection', selection: chosenModel } })
+  assert.equal(lockResult.ok, true, JSON.stringify(lockResult))
+  assert.equal(defaults.currentSelection().model, 'original')
+  await current.call('mutate', { request: { type: 'defaultModelLock', enabled: true } })
+  assert.deepEqual(defaults.currentSelection(), chosenModel)
+  lockResult = await current.call('mutate', { request: { type: 'defaultModelSelection', selection: { ...chosenModel, model: 'unavailable' } } })
+  assert.equal(lockResult.error?.code, 'model_unavailable')
+  assert.deepEqual(defaults.currentSelection(), chosenModel)
   await current.call('mutate', { request: { type: 'unfollow', sessionId: 'fixture-main' } })
   let result = await current.call('mutate', { request: { type: 'add', sessionIds: ['fixture-main'], columnId: 'later' } })
   assert.equal(result.ok, true)
@@ -141,6 +179,7 @@ try {
   assert.notEqual(ideaResult.value.ideas.find(item => item.id === ideaId).trashedAt, null)
   await current.ctx.fiber.dispose()
   current = await open()
+  assert.deepEqual(current.ctx.get('agentDefaultModel').currentSelection(), chosenModel)
   assert.deepEqual((await current.callGroupOrder('read')).value, sortedGroups.value, '分组顺序在宿主重开后应保留')
   ideaResult = await current.callIdea('read')
   assert.equal(ideaResult.value.ideas.find(item => item.id === capturedId)?.content, '仅本次合成输入', 'AI 会话保存重启后应保留')
@@ -170,9 +209,10 @@ try {
   result = await current.call('read')
   assert.ok(!result.value.entries.some(entry => entry.sessionId === saved.sessionId), '取消归档不自动恢复关注')
   await current.hostFiber.dispose()
+  assert.equal(current.ctx.get('agentDefaultModel').currentSelection().model, 'original')
   assert.equal(current.ctx.get('tools').schemas().some(tool => tool.name === 'task_workbench_save_idea'), false, '卸载工作台应注销会话工具')
   assert.equal((await current.ctx.get('systemPrompt').assemble()).sections.some(section => section.name === 'plugin:task-workbench-ideas'), false, '卸载工作台应注销提示段')
-  console.log(JSON.stringify({ groupOrder: '真实 RPC 分组排序不改变关注分类', ideaCapture: '真实工具注册、执行、会话关联与同次调用去重通过', ideaDomain: '真实 RPC 信封、独立存储、回收及重启恢复通过', archiveAutoUnfollow: '真实 RPC 读取清理与取消归档不复活通过', dshVersion: nativeVersion, passed: ['真实 Cordis 插件注入', '真实 Typert Gateway 认证 owner 调用及参数校验', '真实 storageDomain + JSON 原子落盘', '普通 fork 自动纳入且不改变已有分类', '关闭后重新挂载保留取消快照、排除及开关，再原子恢复备注与分类'], scope: '使用已安装 DSH 官方服务和合成会话；不接触运行中的 GUI 或真实会话。' }, null, 2))
+  console.log(JSON.stringify({ defaultModelLock: '真实宿主默认模型服务验证锁定、阻止写回、重新挂载和卸载恢复', groupOrder: '真实 RPC 分组排序不改变关注分类', ideaCapture: '真实工具注册、执行、会话关联与同次调用去重通过', ideaDomain: '真实 RPC 信封、独立存储、回收及重启恢复通过', archiveAutoUnfollow: '真实 RPC 读取清理与取消归档不复活通过', dshVersion: nativeVersion, passed: ['真实 Cordis 插件注入', '真实 Typert Gateway 认证 owner 调用及参数校验', '真实 storageDomain + JSON 原子落盘', '普通 fork 自动纳入且不改变已有分类', '关闭后重新挂载保留取消快照、排除及开关，再原子恢复备注与分类'], scope: '使用已安装 DSH 官方服务和合成会话；不接触运行中的 GUI 或真实会话。' }, null, 2))
 } finally { await current.ctx.fiber.dispose() }
 // 没有可选 tools 服务时，原有工作台和点子 RPC 仍可使用。
 const withoutTools = await open(false)

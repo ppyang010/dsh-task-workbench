@@ -1,4 +1,4 @@
-import { RPC_NAMESPACE, initialState, stateSchema, sessionIdSchema, type ArchiveBatchResult, type BoardState, type BoardControllerFace, type ClientState, type Command, type SessionView } from '../shared/model.ts'
+import { RPC_NAMESPACE, initialState, stateSchema, sessionIdSchema, modelCatalogSchema, type ModelCatalog, type ArchiveBatchResult, type BoardState, type BoardControllerFace, type ClientState, type Command, type SessionView } from '../shared/model.ts'
 import type { RuntimeFace } from './runtime.ts'
 
 export interface RemoteFace { call(channel: string, endpoint: string, payload: unknown, signal?: AbortSignal): Promise<any> }
@@ -67,6 +67,11 @@ export class BoardController implements BoardControllerFace {
       catch (error) { this.patch({ loading: false, error: error instanceof Error ? error.message : '关注数据同步失败，请稍后重试' }) }
     })().finally(() => { this.inflight = undefined })
     return this.inflight
+  }
+  loadModelCatalog = async (signal: AbortSignal): Promise<ModelCatalog> => {
+    const response = await this.rpc.call('/api', 'session/modelCatalog', { args: {} }, AbortSignal.any([signal, AbortSignal.timeout(12000)]))
+    if (!response?.ok) throw new Error('暂时无法加载 DSH 模型目录')
+    return modelCatalogSchema.parse(response.value)
   }
   async command(command: Command): Promise<boolean> {
     if (this.state.saving || this.state.loading || !this.state.connected) return false

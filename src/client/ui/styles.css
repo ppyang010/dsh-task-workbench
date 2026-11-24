@@ -247,6 +247,9 @@ body[data-ds-dark-theme] .dtw-root,
 .dtw-root .dtw-settings > section > strong { display: block; font-size: 13px; font-weight: 600; }
 .dtw-root .dtw-settings > section > p { margin: 6px 0 12px; color: var(--dtw-muted); font-size: 12px; line-height: 1.8; }
 .dtw-root .dtw-settings .dtw-auto { margin-top: 4px; }
+.dtw-root .dtw-default-model-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.dtw-root .dtw-default-model-fields label { display: grid; gap: 4px; min-width: 0; max-width: 100%; font-size: 12px; }
+.dtw-root .dtw-default-model-fields label:first-child { flex: 1 1 200px; }
 .dtw-root .dtw-settings .dtw-rules { padding: 0; }
 .dtw-root .dtw-settings .dtw-rules section:first-child { border-top: 0; padding-top: 8px; }
 .dtw-root .dtw-rename-form { padding: 16px; }
