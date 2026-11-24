@@ -8,6 +8,7 @@ import { IdeasRemote } from './ideas-remote.ts'
 import { createIdeaCaptureTool, IDEA_CAPTURE_GUIDANCE } from './idea-capture-tool.ts'
 import { openGroupOrderStore } from './group-order-store.ts'
 import { GroupOrderRemote } from './group-order-remote.ts'
+import { isSidechat } from '../shared/sidechat.ts'
 
 export const name = 'ppyang010-task-workbench'
 export const inject = ['storageDomain', 'sessionQuery', 'workspaceRegistry']
@@ -69,6 +70,20 @@ export function apply(ctx: any): void {
     toolCtx.effect(() => toolCtx.get('tools').register(createIdeaCaptureTool(ideasReady)), 'task-workbench: save-idea tool')
     toolCtx.inject(['systemPrompt'], (promptCtx: any) => {
       promptCtx.effect(() => promptCtx.get('systemPrompt').section({ name: 'plugin:task-workbench-ideas', order: 500, text: IDEA_CAPTURE_GUIDANCE }), 'task-workbench: idea guidance')
+      promptCtx.inject(['sessionTitle'], (titleCtx: any) => {
+        titleCtx.effect(() => titleCtx.get('systemPrompt').section({
+          name: 'plugin:task-workbench-sidechat-knowledge',
+          order: 501,
+          text: ({ agent }: { agent?: { session?: { header: { origin?: string; parentSession?: string } } } }) => {
+            const session = agent?.session
+            const header = session?.header
+            if (!session || header?.origin !== 'subagent' || !header.parentSession) return ''
+            const title = titleCtx.get('sessionTitle').get(session)
+            if (title?.source.kind !== 'user' || !isSidechat(header.origin, header.parentSession, title.title)) return ''
+            return '当前是侧聊。按现有流程调用 workbench_submit_knowledge 提交知识草稿时，在 tags 中保留一项「来自侧聊」（已有则不重复，标签总数最多 20 项）。这只是来源标识，继续等待用户在知识库确认入库。'
+          },
+        }), 'task-workbench: sidechat knowledge guidance')
+      })
     })
   })
 }

@@ -17,6 +17,16 @@ test('跨工作区摘要与原会话 ID 保留，普通 fork 可关注', () => {
   assert.equal(result.sessions.find(s => s.id === 'fork')?.subagent, false)
   assert.equal(result.sessions.find(s => s.id === 'child')?.subagent, true)
 })
+test('侧聊继承父会话的工作区，且可以打开原对话', () => {
+  const side = { id: 'side', parentId: 'a', origin: 'subagent', displayTitle: 'Side: 解释结果' }
+  const result = deriveSessions({ ...list, byId: { ...list.byId, side } }, workspaces, new Map(), true)
+  const projected = result.sessions.find(session => session.id === side.id)
+  assert.equal(projected?.workspaceId, 'one')
+  assert.equal(projected?.sidechat, true)
+  assert.equal(projected?.openable, true)
+  assert.equal(result.sessions.find(session => session.id === 'child')?.openable, false)
+})
+
 test('等待交互优先于 running，原生未读优先于空闲', () => {
   for (const [kind, label] of [['approval', '等待审批'], ['plan-review', '等待方案确认'], ['question', '等待回答']]) {
     const result = deriveSessions(list, workspaces, new Map([['a', { running: true, pendingInteraction: { kind } }], ['fork', { running: false, completionUnread: true }]]), true)

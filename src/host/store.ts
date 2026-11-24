@@ -51,6 +51,7 @@ export class WatchStore {
       return
     }
     if (request.type === 'settings') { draft.settings.autoCollect = request.autoCollect; return }
+    if (request.type === 'sidechatSettings') { draft.settings.autoCollectSidechat = request.enabled; return }
     if (request.type === 'chatBackground') { draft.settings.chatBackground = { ...request.value, color: request.value.color.toLowerCase() }; return }
     if (request.type === 'copySettings') { draft.settings.copySessionName = request.includeName; return }
     if (request.type === 'mirrorActivity') { draft.settings.mirrorActivity = request.enabled; return }
@@ -124,11 +125,12 @@ export class WatchStore {
     })
   }
   /** 自动纳入只新增关注，既不重排已有卡片，也不复活手动排除项。 */
-  autoCollect(sessionId: string): Promise<BoardState> {
+  autoCollect(sessionId: string, source: 'auto' | 'sidechat' = 'auto'): Promise<BoardState> {
     return this.enqueue(draft => {
-      if (!draft.settings.autoCollect || draft.excludedSessionIds.includes(sessionId) || draft.entries.some(entry => entry.sessionId === sessionId)) return
+      const enabled = source === 'sidechat' ? draft.settings.autoCollectSidechat : draft.settings.autoCollect
+      if (!enabled || draft.excludedSessionIds.includes(sessionId) || draft.entries.some(entry => entry.sessionId === sessionId)) return
       const now = this.clock()
-      draft.entries.push({ sessionId, columnId: 'focus', note: '', source: 'auto', addedAt: now, updatedAt: now, version: 1 })
+      draft.entries.push({ sessionId, columnId: 'focus', note: '', source, addedAt: now, updatedAt: now, version: 1 })
     })
   }
   async drain(): Promise<void> { this.closing = true; await this.tail }

@@ -1,5 +1,6 @@
 import type { RuntimeSnapshot, RuntimeStatus, SessionView } from '../shared/model.ts'
 import { preserveArchivePanel } from './archive-navigation.ts'
+import { isSidechat } from '../shared/sidechat.ts'
 
 export interface Source<T> { getSnapshot(): T; subscribe(listener: () => void): () => void }
 export interface SessionRow {
@@ -28,18 +29,20 @@ export function deriveSessions(list: SessionList, workspaces: WorkspaceList, sta
   const archivedIds = new Set(workspaces.archivedSessionIds)
   const ready = list.phase === 'ready' && workspaces.phase === 'ready'
   const sessions: SessionView[] = Object.values(list.byId).map(row => {
-    const ws = owners.get(row.id)
+    const sidechat = isSidechat(row.origin, row.parentId, row.displayTitle || row.title)
+    const ws = owners.get(row.id) ?? (sidechat && row.parentId ? owners.get(row.parentId) : undefined)
     const native = statuses.get(row.id)
     const waitingLabel = pendingLabels[native?.pendingInteraction?.kind ?? '']
     const running = native?.running ?? row.running
     const status: RuntimeStatus = !connected ? 'unknown' : waitingLabel ? 'waiting' : running === true ? 'running' : native?.completionUnread === true ? 'unread' : running === false ? 'idle' : 'unknown'
-    const subagent = row.origin === 'subagent'
+    const subagent = row.origin === 'subagent' && !sidechat
     return {
       id: row.id, title: row.title || row.displayTitle || `会话 ${row.id.slice(-8)}`,
       workspaceId: ws?.workspaceId ?? '',
       workspaceTitle: ws?.title || ws?.path?.split(/[\\/]/).filter(Boolean).at(-1) || '未分组',
       updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt! : 0,
       status, archived: archivedIds.has(row.id), missing: false, subagent,
+      ...(sidechat ? { sidechat: true } : {}),
       openable: ready && connected && !subagent && !archivedIds.has(row.id) && (row.formatStatus === undefined || row.formatStatus === 'current'),
       ...(waitingLabel ? { waitingLabel } : {}),
     }

@@ -107,6 +107,7 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
       {selecting && <input type="checkbox" className="dtw-card-checkbox" checked={selected} disabled={busy} onChange={onSelect} aria-label={`选择会话：${row.title}`} />}
       <span className="dtw-drag-handle" aria-hidden="true" title="拖动调整分类和顺序"><Icon name="grip" /></span>
       <h3><button ref={title} type="button" className="dtw-card-title dtw-open-button" disabled={disabled || opening || !!row.unavailableReason} onClick={onOpen} aria-label={`打开原对话：${row.title}`} title={row.unavailableReason || (editing ? '先保存或取消备注' : row.title)}>{opening ? '正在打开…' : row.title}</button></h3>
+      {(row.entry.source === 'sidechat' || row.session?.sidechat) && <span className="dtw-sidechat-label">侧聊</span>}
       <StatusBadge status={row.status} waitingLabel={row.session?.waitingLabel} />
     </div>
     {!row.mirrored && draft ? <form className="dtw-note-editor" onSubmit={event => {
@@ -143,10 +144,10 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
         <summary ref={menuTrigger} className="dtw-icon-button" aria-label={`更多操作：${row.title}`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault() }} onKeyDown={event => { if (disabled && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} title="复制、移动分类、修改会话名、备注、排序与取消关注"><Icon name="more" /></summary>
         <div className="dtw-card-menu-panel">
           <label className="dtw-menu-move">移动到<select className="dtw-move-select" title={row.mirrored ? '同步展示，请在「我的关注」原卡片调整分类' : '调整人工分类'} value={row.entry.columnId} disabled={disabled || row.mirrored} onChange={event => { const column = event.target.value as ColumnId; menuAction(() => onMove(column)) }} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select></label>
-          <span className="dtw-menu-source">来源：{row.entry.source === 'auto' ? '自动纳入' : '手动关注'}</span>
+          <span className="dtw-menu-source">来源：{row.entry.source === 'sidechat' ? '侧聊自动纳入' : row.entry.source === 'auto' ? '自动纳入' : '手动关注'}</span>
           <button type="button" disabled={disabled} onClick={() => menuAction(() => { void copySession(false) })} aria-label={`复制 Session ID：${row.title}`}><Icon name="copy" />复制 Session ID</button>
           <button type="button" disabled={disabled} onClick={() => menuAction(() => { void copySession(true) })} aria-label={`复制名称和 ID：${row.title}`}><Icon name="copy" />复制名称和 ID</button>
-          <button type="button" disabled={disabled || opening || !!row.unavailableReason} onClick={() => menuAction(onRename)} aria-label={`修改会话名：${row.title}`}><Icon name="edit" />修改会话名</button>
+          <button type="button" disabled={disabled || opening || !!row.unavailableReason || row.entry.source === 'sidechat' || !!row.session?.sidechat} onClick={() => menuAction(onRename)} aria-label={`修改会话名：${row.title}`}><Icon name="edit" />修改会话名</button>
           {!row.mirrored && <button type="button" disabled={disabled} onClick={editNote} aria-label={`${row.entry.note ? '编辑' : '添加'}备注：${row.title}`}><Icon name="edit" />{row.entry.note ? '编辑备注' : '添加备注'}</button>}
           <button type="button" disabled={disabled || index <= 0} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index - 1]?.entry.sessionId))} aria-label={`上移：${row.title}`}><Icon name="up" />上移</button>
           <button type="button" disabled={disabled || index < 0 || index >= sortableRows.length - 1} onClick={() => menuAction(() => onMove(row.entry.columnId, sortableRows[index + 2]?.entry.sessionId))} aria-label={`下移：${row.title}`}><Icon name="down" />下移</button>

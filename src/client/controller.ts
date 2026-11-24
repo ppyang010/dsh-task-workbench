@@ -96,6 +96,7 @@ export class BoardController implements BoardControllerFace {
     if (!this.state.connected || !this.state.runtimeReady || !target?.openable || target.missing || target.archived || target.subagent) {
       this.patch({ error: '当前会话不可修改名称，请确认连接正常且会话未归档' }); return false
     }
+    if (target.sidechat) { this.patch({ error: '请在原侧聊界面管理会话名称' }); return false }
     if (name === target.title) { this.clearError(); return true }
     this.patch({ saving: true, error: undefined })
     try {

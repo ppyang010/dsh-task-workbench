@@ -17,6 +17,34 @@ test('初次启用为空，自动纳入默认关闭，中间列同步展示默�
   assert.deepEqual(f.store.snapshot(), initialState()); assert.equal(f.writes(), 0)
   assert.equal(f.store.snapshot().settings.mirrorActivity, true)
 })
+test('侧聊自动纳入独立开关，普通子代理不纳入，恢复保留侧聊来源', async () => {
+  const { store } = fixture()
+  const side = { id: 'side', header: { id: 'side', origin: 'subagent', parentSession: 'main' } }
+  const child = { id: 'child', header: { ...side.header, id: 'child' } }
+  const main = { id: 'main', header: { id: 'main' } }
+  const service = new WorkbenchService(store, {
+    sessionQuery: {
+      listSessions: async () => [side, child, main].map(({ header }) => ({ header })),
+      readTitle: async id => id === side.id ? { title: 'Side: 解释结果', source: { kind: 'user' } } : { title: 'Side: 子代理', source: { kind: 'provider' } },
+    },
+    workspaceRegistry: { archivedSessionIds: [] },
+  })
+  const turn = { type: 'turn/start' }
+  await service.onSessionEvent(side, turn)
+  assert.deepEqual(service.read().entries, [])
+  await service.mutate({ type: 'sidechatSettings', enabled: true })
+  await service.onSessionEvent(main, turn)
+  await service.onSessionEvent(child, turn)
+  await service.onSessionEvent(side, turn)
+  assert.deepEqual(service.read().entries.map(({ sessionId, source }) => [sessionId, source]), [['side', 'sidechat']])
+  await service.mutate({ type: 'unfollow', sessionId: 'side' })
+  await service.onSessionEvent(side, turn)
+  assert.deepEqual(service.read().entries, [])
+  await service.mutate({ type: 'sidechatSettings', enabled: false })
+  await service.mutate({ type: 'restore', sessionId: 'side' })
+  assert.equal(service.read().entries[0]?.source, 'sidechat')
+})
+
 test('中间列同步展示开关独立保存，不改自动纳入', async () => {
   const { store } = fixture()
   await store.command({ type: 'settings', autoCollect: true })

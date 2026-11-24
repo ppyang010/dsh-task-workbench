@@ -1,9 +1,13 @@
 import { commandSchema, sessionIdSchema, type BoardState } from '../shared/model.ts'
 import { WatchStore, WorkbenchError } from './store.ts'
+import { isSidechat } from '../shared/sidechat.ts'
 
 export interface SessionHeader { id: string; origin?: string; delegationDepth?: number; parentSession?: string; isSeeded?: boolean }
 export interface HostServices {
-  sessionQuery: { listSessions(signal?: AbortSignal): Promise<Array<{ header: SessionHeader; formatStatus?: string }>> }
+  sessionQuery: {
+    listSessions(signal?: AbortSignal): Promise<Array<{ header: SessionHeader; formatStatus?: string }>>
+    readTitle?(id: string): Promise<{ title: string; source: { kind: string } } | undefined>
+  }
   workspaceRegistry: { archivedSessionIds: readonly string[] }
 }
 export function isChildSession(header: SessionHeader): boolean {
@@ -27,12 +31,22 @@ export class WorkbenchService {
     // 仅读取统一目录中的 header，不恢复 Agent、不读取聊天日志正文。
     const records = await this.services.sessionQuery.listSessions()
     const archived = new Set(this.services.workspaceRegistry.archivedSessionIds)
-    const available = new Set(records.filter(record => !isChildSession(record.header) && !archived.has(record.header.id) && (record.formatStatus === undefined || record.formatStatus === 'current')).map(record => record.header.id))
+    const savedSidechat = request.type === 'restore' && this.read().removedEntries.some(({ entry }) => entry.sessionId === request.sessionId && entry.source === 'sidechat') ? request.sessionId : undefined
+    const available = new Set(records.filter(record => (!isChildSession(record.header) || record.header.id === savedSidechat) && !archived.has(record.header.id) && (record.formatStatus === undefined || record.formatStatus === 'current')).map(record => record.header.id))
     return this.store.command(result.data, available)
   }
   async onSessionEvent(session: { id: string; header: SessionHeader }, event: { type: string }): Promise<void> {
-    if (event.type !== 'turn/start' || !sessionIdSchema.safeParse(session.id).success || isChildSession(session.header)) return
+    if (event.type !== 'turn/start' || !sessionIdSchema.safeParse(session.id).success) return
     if (this.services.workspaceRegistry.archivedSessionIds.includes(session.id)) return
-    await this.store.autoCollect(session.id)
+    if (!isChildSession(session.header)) {
+      await this.store.autoCollect(session.id)
+      return
+    }
+    const { settings, entries, excludedSessionIds } = this.read()
+    if (!settings.autoCollectSidechat || session.header.origin !== 'subagent' || !session.header.parentSession) return
+    if (excludedSessionIds.includes(session.id) || entries.some(entry => entry.sessionId === session.id)) return
+    const title = await this.services.sessionQuery.readTitle?.(session.id)
+    if (title?.source.kind !== 'user' || !isSidechat(session.header.origin, session.header.parentSession, title.title)) return
+    if (!this.services.workspaceRegistry.archivedSessionIds.includes(session.id)) await this.store.autoCollect(session.id, 'sidechat')
   }
 }

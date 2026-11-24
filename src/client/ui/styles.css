@@ -204,6 +204,7 @@ body[data-ds-dark-theme] .dtw-root,
 .dtw-root .dtw-card-dragging { opacity: .42; }
 .dtw-root .dtw-card:has(.dtw-card-menu[open]) { z-index: 10; }
 .dtw-root .dtw-card-head { position: relative; display: flex; align-items: flex-start; gap: 5px; }
+.dtw-root .dtw-sidechat-label { flex: none; color: var(--dtw-muted); background: var(--dtw-soft); border-radius: 4px; padding: 1px 5px; font-size: 11px; line-height: 1.5; }
 .dtw-root .dtw-card-head h3 { min-width: 0; flex: 1; font-size: 14px; font-weight: 600; line-height: 1.4; }
 .dtw-root .dtw-drag-handle { position: absolute; left: -9px; top: 2px; width: 8px; color: var(--dtw-muted); opacity: 0; }
 .dtw-root .dtw-card:hover .dtw-drag-handle, .dtw-root .dtw-card:focus-within .dtw-drag-handle, .dtw-root .dtw-card-dragging .dtw-drag-handle { opacity: .5; }

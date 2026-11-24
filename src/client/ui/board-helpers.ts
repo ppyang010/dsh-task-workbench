@@ -105,6 +105,7 @@ export function getUnavailableReason(session: SessionView): string {
 export function getAddDisabledReason(session: SessionView, watchedIds: ReadonlySet<string>): string {
   if (watchedIds.has(session.id)) return '已关注，无需重复添加'
   if (session.subagent) return '子代理会话暂不支持添加'
+  if (session.sidechat) return '可在工作台设置开启侧聊自动纳入'
   if (session.archived) return '已归档会话暂不支持添加'
   if (session.missing) return '原会话暂不可用，无法添加'
   if (!session.openable) return '当前无法打开原会话，暂不支持添加'

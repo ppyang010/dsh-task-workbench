@@ -523,6 +523,16 @@ export function MyFocusBoard({ controller, groupOrder, onNewSession }: { control
           </div>
         </section>
         <section>
+          <strong>侧聊自动纳入</strong>
+          <p>开启后，侧聊开始新一轮时加入「我的关注」，卡片标记为「侧聊」。此设置独立于普通会话的自动纳入。</p>
+          <div className="dtw-auto">
+            <span className="dtw-auto-title">{state.board.settings.autoCollectSidechat ? '已开启' : '已关闭'}</span>
+            <button type="button" role="switch" className="dtw-switch" aria-label="侧聊自动纳入" aria-checked={state.board.settings.autoCollectSidechat} disabled={disabled} onClick={() => {
+              void command({ type: 'sidechatSettings', enabled: !state.board.settings.autoCollectSidechat })
+            }}><span /></button>
+          </div>
+        </section>
+        <section>
           <strong>中间列同步展示</strong>
           <p>开启后，「我的关注」里运行中、等待回应、完成未读会同时出现在中间列，原卡片不离开。关闭后，中间列只保留你手动放入「等我处理」的会话。暂时搁置不参与同步。</p>
           <div className="dtw-auto">
