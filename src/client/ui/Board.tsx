@@ -133,6 +133,15 @@ export function MyFocusBoard({ controller, groupOrder, onNewSession }: { control
   const [localError, setLocalError] = useState<string | undefined>()
   const [notice, setNotice] = useState('')
   const [undo, setUndo] = useState<UndoEntry | null>(null)
+  const [toastHovered, setToastHovered] = useState(false)
+  const [toastFocused, setToastFocused] = useState(false)
+  const toast = useRef<HTMLElement>(null)
+  const dismissToast = useCallback(() => {
+    setNotice('')
+    setUndo(null)
+    setToastHovered(false)
+    setToastFocused(false)
+  }, [])
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const draggingRef = useRef<string | null>(null)
   const groupDragRef = useRef<GroupDragSnapshot | null>(null)
@@ -154,6 +163,12 @@ export function MyFocusBoard({ controller, groupOrder, onNewSession }: { control
   const visibleIds = useMemo(() => new Set(visible.map(row => row.entry.sessionId)), [visible])
   const busy = state.loading || state.saving || pending || groupState.saving
   const disabled = busy || !state.connected
+  useEffect(() => {
+    const focusInside = toastFocused && toast.current?.matches(':focus-within')
+    if ((!notice && !undo) || toastHovered || focusInside || busy || modal) return
+    const timer = setTimeout(dismissToast, undo ? 5000 : 3000)
+    return () => clearTimeout(timer)
+  }, [notice, undo, toastHovered, toastFocused, busy, modal, dismissToast])
   const error = localError || state.error || groupState.error
   const filtered = !!query.trim() || !!workspace || !!status
   const selectedIds = [...selected].filter(id => watchedIds.has(id))
@@ -504,7 +519,17 @@ export function MyFocusBoard({ controller, groupOrder, onNewSession }: { control
         })}
       </section>
     </main>
-    {(notice || undo) && <aside className="dtw-toast" role="status" aria-live="polite"><span>{notice}</span>{undo && <button className="dtw-text-button" type="button" disabled={disabled || modal !== null} onClick={() => { void restore() }}><Icon name="undo" />撤销取消关注</button>}<button type="button" className="dtw-icon-button" aria-label="关闭操作提示" disabled={modal !== null || busy} onClick={() => { setNotice(''); setUndo(null) }}><Icon name="close" /></button></aside>}
+    {(notice || undo) && <aside ref={toast} className="dtw-toast" role="status" aria-live="polite"
+      onPointerOver={event => { if (event.pointerType !== 'touch') setToastHovered(true) }}
+      onPointerOut={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setToastHovered(false)
+      }}
+      onFocus={() => setToastFocused(true)}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setToastFocused(false) }}>
+      <span>{notice}</span>
+      {undo && <button className="dtw-text-button" type="button" disabled={disabled || modal !== null} onClick={() => { void restore() }}><Icon name="undo" />撤销取消关注</button>}
+      <button type="button" className="dtw-icon-button" aria-label="关闭操作提示" disabled={modal !== null || busy} onClick={dismissToast}><Icon name="close" /></button>
+    </aside>}
     {modal?.type === 'add' && <AddDialog sessions={state.sessions} watchedIds={watchedIds} initialColumn={modal.columnId} busy={busy} offline={!state.connected} runtimeReady={state.runtimeReady} error={error} onClose={closeModal} onRefresh={() => { void refresh() }} onAdd={async (ids, columnId) => {
       const success = await command({ type: 'add', sessionIds: ids, columnId })
       if (success) { revealColumn(columnId); ids.forEach(id => revealGroup(columnId, id)); setModal(null); setNotice(`已关注 ${ids.length} 条会话。`); setUndo(null) }

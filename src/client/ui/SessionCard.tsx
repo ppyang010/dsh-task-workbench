@@ -39,6 +39,11 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
   const [overflowing, setOverflowing] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [above, setAbove] = useState(false)
+  const [moveChoice, setMoveChoice] = useState<ColumnId>()
+  const currentColumn = row.entry.columnId
+  const defaultTarget = currentColumn === 'later' ? 'focus' : 'later'
+  const moveTarget = moveChoice && moveChoice !== currentColumn ? moveChoice : defaultTarget
+  const moveTitle = COLUMNS.find(column => column.id === moveTarget)?.title
   const noteId = useId()
   const textArea = useRef<HTMLTextAreaElement>(null)
   const noteText = useRef<HTMLParagraphElement>(null)
@@ -48,11 +53,13 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
   const index = sortableRows.findIndex(item => item.entry.sessionId === row.entry.sessionId)
   const editing = draft !== null
   const disabled = busy || editing || selecting
+  const moveDisabled = disabled || row.mirrored
   const changedElsewhere = draft !== null && draft.expectedVersion !== row.entry.version
 
   const closeMenu = (restoreFocus = false) => {
     if (menu.current) menu.current.open = false
     setMenuOpen(false)
+    setMoveChoice(undefined)
     if (restoreFocus) menuTrigger.current?.focus()
   }
   useEffect(() => {
@@ -131,6 +138,7 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
       <details className="dtw-card-menu" ref={menu} data-placement={above ? 'above' : 'below'} onToggle={event => {
         const open = event.currentTarget.open
         setMenuOpen(open)
+        if (!open) setMoveChoice(undefined)
         if (open && menuTrigger.current) {
           const rect = menuTrigger.current.getBoundingClientRect()
           const bounds = menu.current?.closest('.dtw-column-body')?.getBoundingClientRect()
@@ -143,7 +151,13 @@ export function SessionCard({ selecting = false, selected = false, onSelect, dra
       }} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) closeMenu() }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(true) } }}>
         <summary ref={menuTrigger} className="dtw-icon-button" aria-label={`更多操作：${row.title}`} aria-disabled={disabled} tabIndex={disabled ? -1 : 0} onClick={event => { if (disabled) event.preventDefault() }} onKeyDown={event => { if (disabled && (event.key === 'Enter' || event.key === ' ')) event.preventDefault() }} title="复制、移动分类、修改会话名、备注、排序与取消关注"><Icon name="more" /></summary>
         <div className="dtw-card-menu-panel">
-          <label className="dtw-menu-move">移动到<select className="dtw-move-select" title={row.mirrored ? '同步展示，请在「我的关注」原卡片调整分类' : '调整人工分类'} value={row.entry.columnId} disabled={disabled || row.mirrored} onChange={event => { const column = event.target.value as ColumnId; menuAction(() => onMove(column)) }} aria-label={`调整分类：${row.title}`}>{COLUMNS.map(column => <option key={column.id} value={column.id}>{column.title}</option>)}</select></label>
+          <div className="dtw-menu-move">
+            <label htmlFor={`${noteId}-move`}>移动到</label>
+            <select id={`${noteId}-move`} className="dtw-move-select" title={row.mirrored ? '同步展示，请在「我的关注」原卡片调整分类' : '调整人工分类'} value={moveTarget} disabled={disabled || row.mirrored} onChange={event => setMoveChoice(event.target.value as ColumnId)} aria-label={`调整分类：${row.title}`}>
+              {COLUMNS.filter(column => column.id !== currentColumn).map(column => <option key={column.id} value={column.id}>{column.title}</option>)}
+            </select>
+            <button type="button" disabled={moveDisabled} aria-label={`移到${moveTitle}：${row.title}`} onClick={() => menuAction(() => onMove(moveTarget))}>移动</button>
+          </div>
           <span className="dtw-menu-source">来源：{row.entry.source === 'sidechat' ? '侧聊自动纳入' : row.entry.source === 'auto' ? '自动纳入' : '手动关注'}</span>
           <button type="button" disabled={disabled} onClick={() => menuAction(() => { void copySession(false) })} aria-label={`复制 Session ID：${row.title}`}><Icon name="copy" />复制 Session ID</button>
           <button type="button" disabled={disabled} onClick={() => menuAction(() => { void copySession(true) })} aria-label={`复制名称和 ID：${row.title}`}><Icon name="copy" />复制名称和 ID</button>

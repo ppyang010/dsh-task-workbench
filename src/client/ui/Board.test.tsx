@@ -24,7 +24,10 @@ test('精简卡片将分类和来源收进菜单，状态位于标题右侧并�
   const html = markup(client({ board: { ...initialState(), entries: [entry('a', { source: 'auto', note: '备注内容' })] }, sessions: [session('a')] }))
   const card = html.match(/<article[\s\S]*?<\/article>/)?.[0] ?? ''
   const menu = card.slice(card.indexOf('<details'))
-  assert.match(menu, /移动到<select/)
+  assert.match(menu, /移动到<\/label><select/)
+  assert.match(menu, /<option value="later" selected="">暂时搁置<\/option>/)
+  assert.doesNotMatch(menu, /<option value="focus"/)
+  assert.match(menu, /aria-label="移到暂时搁置：会话 a"/)
   assert.match(menu, /取消关注/)
   assert.equal((card.match(/aria-label="取消关注：会话 a"/g) ?? []).length, 1)
   assert.doesNotMatch(card, /dtw-card-unfollow/)
@@ -43,6 +46,17 @@ test('精简卡片将分类和来源收进菜单，状态位于标题右侧并�
   assert.match(card, /备注内容/)
   assert.match(card, /title="会话 a"/)
   assert.match(card, /data-dtw-status="idle"/)
+})
+
+test('等我处理默认移到搁置，搁置默认移回我的关注，同步卡片的移动控件禁用', () => {
+  const html = markup(client({
+    board: { ...initialState(), entries: [entry('waiting', { columnId: 'waiting' }), entry('later', { columnId: 'later' }), entry('running')] },
+    sessions: [session('waiting'), session('later'), session('running', { status: 'running' })],
+  }))
+  const cards = html.match(/<article[\s\S]*?<\/article>/g) ?? []
+  assert.match(cards.find(card => card.includes('data-dtw-session="waiting"')) ?? '', /<option value="later" selected="">/)
+  assert.match(cards.find(card => card.includes('data-dtw-session="later"')) ?? '', /<option value="focus" selected="">/)
+  assert.match(cards.find(card => card.includes('data-dtw-mirrored="true"')) ?? '', /disabled="" aria-label="移到暂时搁置：会话 running"/)
 })
 
 test('活动会话卡片标记整卡呼吸状态，空闲卡片保持静态', () => {
